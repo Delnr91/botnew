@@ -1,0 +1,15 @@
+# Entornos virtuales
+venv/
+env/
+.env
+
+# Archivos de Python
+__pycache__/
+*.pyc
+
+# Base de datos local
+news.db
+news.db-journal
+
+# Logs
+*.log
