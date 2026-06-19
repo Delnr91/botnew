@@ -1,7 +1,7 @@
 import unittest
 import os
-from fetcher import is_quality_news
-from database import init_db, is_news_sent, mark_news_as_sent
+from src.services.rss_fetcher import is_quality_news
+from src.core.database import init_db, is_news_sent, mark_news_as_sent
 
 class TestBotLogic(unittest.TestCase):
     

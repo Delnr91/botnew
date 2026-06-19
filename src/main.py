@@ -5,6 +5,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     LinkPreviewOptions, ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
@@ -13,12 +15,13 @@ from aiogram.types import (
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
-from database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
-from memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location
-from oracles import get_weather_and_aqi, get_btc_oracle
-from fetcher import fetch_latest_news
-from agents import init_llm_clients, manager_agent, transcribe_audio
-from payments import (
+from src.core.database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
+from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location
+from src.agents.engine import process_and_send_news, init_llm_clients, manager_agent, transcribe_audio
+from src.services.oracles import get_weather_and_aqi, get_btc_oracle
+from src.services.rss_fetcher import fetch_latest_news
+from src.agents.marketing import generate_marketing_campaign
+from src.services.payments import (
     activate_vip, check_vip_status, init_payment_tables,
     VIP_PRICE_STARS, VIP_PRICE_USDT, VIP_DURATION_DAYS
 )
@@ -100,7 +103,7 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
         except Exception as e:
             pass
 
-from memory import get_all_users
+from src.core.memory import get_all_users
 
 async def scheduled_job():
     """Motor 24/7 para VIPs: Escanea el radar constantemente y envía PUSH en tiempo real."""
@@ -155,20 +158,75 @@ def get_main_keyboard(is_vip: bool = False):
     )
     return keyboard
 
+from src.core.memory import update_user_demographics
+
+class OnboardingStates(StatesGroup):
+    waiting_for_city = State()
+    waiting_for_age = State()
+    waiting_for_gender = State()
+
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     user_id = str(message.from_user.id)
     username = message.from_user.first_name or "Usuario"
-    get_or_create_user_profile(user_id, username)
+    profile = get_or_create_user_profile(user_id, username)
+    
+    if profile.get('city') and profile.get('age'):
+        welcome_text = (
+            f"👋 Bienvenido de vuelta, <b>{username}</b>.\n\n"
+            "Tu ecosistema personal de inteligencia está activo.\n"
+            "Toca '☀️ Buenos Días' para tu reporte."
+        )
+        is_vip = check_vip_status(user_id).get('is_vip', False)
+        await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip))
+        return
+
+    # Iniciar Onboarding
+    await state.set_state(OnboardingStates.waiting_for_city)
+    await message.answer(f"👋 Bienvenido a Atlos, <b>{username}</b>.\n\nPara personalizar tu inteligencia artificial y ajustar los oráculos del clima, por favor escribe el nombre de tu <b>Ciudad</b> (Ej: Madrid, Bogotá, Miami):")
+
+@dp.message(OnboardingStates.waiting_for_city)
+async def process_city(message: types.Message, state: FSMContext):
+    await state.update_data(city=message.text)
+    await state.set_state(OnboardingStates.waiting_for_age)
+    await message.answer("Excelente. Ahora, ¿cuál es tu <b>Edad</b>? (Escribe solo el número, ej: 28)")
+
+@dp.message(OnboardingStates.waiting_for_age)
+async def process_age(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Por favor escribe solo el número (ej: 28).")
+        return
+    await state.update_data(age=int(message.text))
+    
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Hombre"), KeyboardButton(text="Mujer")],
+            [KeyboardButton(text="Prefiero no decirlo")]
+        ], 
+        resize_keyboard=True
+    )
+    await state.set_state(OnboardingStates.waiting_for_gender)
+    await message.answer("Perfecto. Por último, ¿cuál es tu <b>Género</b>? (Esto ajusta el tono psicológico de la redacción de noticias)", reply_markup=kb)
+
+@dp.message(OnboardingStates.waiting_for_gender)
+async def process_gender(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    city = data['city']
+    age = data['age']
+    gender = message.text
+    
+    user_id = str(message.from_user.id)
+    update_user_location(user_id, city)
+    update_user_demographics(user_id, age, gender)
+    
+    await state.clear()
     
     welcome_text = (
-        f"👋 Bienvenido, <b>{username}</b>. Soy <b>Atlos</b>.\n\n"
-        "Tu ecosistema personal de inteligencia (Simbiosis Humano-IA). "
-        "Monitoreo criptomonedas, bolsa, clima y geopolítica 24/7, y te entrego "
-        "solo lo que realmente importa para tu vida y bolsillo.\n\n"
-        "Toca '☀️ Buenos Días' para tu primer reporte."
+        f"✅ ¡Perfil configurado exitosamente!\n\n"
+        "Atlos ya calibró sus oráculos para tu ciudad y ajustó su psicología a tu perfil.\n\n"
+        "Toca '☀️ Buenos Días' abajo para recibir tu primer reporte personalizado."
     )
-    is_vip = check_vip_status(user_id)['is_vip']
+    is_vip = check_vip_status(user_id).get('is_vip', False)
     await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip))
 
 @dp.message(F.text.contains("Buenos"))
@@ -227,7 +285,7 @@ async def cmd_ciudad(message: types.Message):
     await message.answer(f"✅ ¡Listo! Tu radar climático ha sido configurado en <b>{nueva_ciudad}</b>. Toca '☀️ Buenos Días' para probarlo.")
 
 # --- PANEL VIP ---
-from memory import get_user_preferences, update_user_preferences
+from src.core.memory import get_user_preferences, update_user_preferences
 import json
 
 CATEGORIAS_RADAR = [
