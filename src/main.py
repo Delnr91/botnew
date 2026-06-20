@@ -18,7 +18,7 @@ load_dotenv()
 
 from src.core.database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
 from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location, get_troll_strikes, add_troll_strike
-from src.agents.engine import process_and_send_news, init_llm_clients, manager_agent, transcribe_audio, conversational_agent
+from src.agents.engine import init_llm_clients, manager_agent, transcribe_audio, conversational_agent
 from src.services.oracles import get_weather_and_aqi, get_btc_oracle
 from src.services.rss_fetcher import fetch_latest_news
 from src.agents.marketing import generate_marketing_campaign
