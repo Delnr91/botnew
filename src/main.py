@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
@@ -158,8 +159,8 @@ async def scheduled_morning():
 
 def get_main_keyboard(is_vip: bool = False):
     botones = [
-        [KeyboardButton(text="☀️ Buenos Días"), KeyboardButton(text="📰 Pulso del Mercado")],
-        [KeyboardButton(text="💎 Premium VIP"), KeyboardButton(text="🏢 Sobre Atlos")]
+        [KeyboardButton(text="📊 Mi Reporte"), KeyboardButton(text="📰 Pulso del Mercado")],
+        [KeyboardButton(text="💎 Premium VIP"), KeyboardButton(text="❓ Ayuda")]
     ]
     if is_vip:
         botones.append([KeyboardButton(text="⚙️ Panel de Control VIP")])
@@ -242,7 +243,9 @@ async def process_gender(message: types.Message, state: FSMContext):
     is_vip = check_vip_status(user_id).get('is_vip', False)
     await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip))
 
+@dp.message(F.text.contains("Mi Reporte"))
 @dp.message(F.text.contains("Buenos"))
+@dp.message(Command('reporte'))
 async def cmd_morning(message: types.Message):
     user_id = str(message.from_user.id)
     username = message.from_user.first_name or "Usuario"
@@ -250,14 +253,26 @@ async def cmd_morning(message: types.Message):
     vip_status = check_vip_status(user_id)
     is_vip = vip_status.get('is_vip', False)
     
-    await message.answer("Atlos esta preparando tu rutina matutina. Analizando clima, mercados y oraculos globales... 🌍")
+    # Saludo inteligente según la hora
+    hora = datetime.now().hour
+    if 6 <= hora < 12:
+        saludo = "🌅 Buenos días"
+        emoji_hora = "☀️"
+    elif 12 <= hora < 19:
+        saludo = "☀️ Buenas tardes"
+        emoji_hora = "🌤️"
+    else:
+        saludo = "🌙 Buenas noches"
+        emoji_hora = "🌙"
+    
+    await message.answer(f"Atlos esta preparando tu reporte personalizado. Analizando clima, mercados y oráculos globales... 🌍")
     
     try:
         user_location = profile.get('city') or profile.get('location')
         clima = await get_weather_and_aqi(user_location or "Bogota")
         btc = await get_btc_oracle()
         
-        reporte = f"🌅 <b>Buenos días, {username}</b>\n\n"
+        reporte = f"{emoji_hora} <b>{saludo}, {username}</b>\n\n"
         if clima['status'] == 'ok':
             reporte += f"☁️ <b>Clima ({clima['location']}):</b> {clima['temp']}°C, {clima['description'].capitalize()}\n"
             reporte += f"🌬️ <b>Calidad del Aire:</b> {clima['aqi']}\n"
@@ -688,6 +703,42 @@ async def cmd_give_vip(message: types.Message):
         await bot.send_message(target_id, f"🎉 ¡Felicidades! Has recibido una membresía VIP de cortesía por {days} días. Disfruta del acceso total a Comandos de Voz e Inteligencia Financiera.")
     except Exception:
         pass
+
+@dp.message(F.text.contains("Ayuda"))
+@dp.message(Command('ayuda'))
+@dp.message(Command('help'))
+async def cmd_ayuda(message: types.Message):
+    user_id = str(message.from_user.id)
+    vip = check_vip_status(user_id)
+    
+    ayuda_text = (
+        "❓ <b>Centro de Ayuda — Atlos</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>📊 Mi Reporte</b>\n"
+        "Tu briefing personalizado: clima, calidad del aire, precio de Bitcoin y las noticias más relevantes del día.\n\n"
+        "<b>📰 Pulso del Mercado</b>\n"
+        "Escanea en tiempo real las fuentes globales y te entrega las noticias de mayor impacto analizadas por nuestra IA.\n\n"
+        "<b>💎 Premium VIP</b>\n"
+        "Desbloquea el acceso completo: comandos de voz, oráculo de ETH y SOL, panel de noticias personalizado y más.\n\n"
+        "<b>🎙️ Notas de Voz</b> (VIP)\n"
+        "Mantén presionado el micrófono y pregúntame lo que quieras: clima, mercados, geopolítica. La IA te responde al instante.\n\n"
+        "<b>Comandos útiles:</b>\n"
+        "/start — Reiniciar el bot\n"
+        "/ciudad Santiago — Cambiar tu ciudad\n"
+        "/reporte — Tu briefing diario\n"
+        "/panel — Panel de noticias (VIP)\n"
+        "/ayuda — Este menú\n"
+    )
+    
+    if vip.get('is_vip'):
+        ayuda_text += (
+            "\n<b>🛡️ Tu nivel:</b> VIP Omnisciente\n"
+            f"<b>⏳ Días restantes:</b> {vip.get('days_left', '?')}\n"
+        )
+    else:
+        ayuda_text += "\n<i>💡 Actualiza a VIP para desbloquear voz, panel y oráculo avanzado.</i>\n"
+    
+    await message.answer(ayuda_text)
 
 async def main():
     global llm_clients
