@@ -80,15 +80,28 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
             ]
         )
 
-        message_text = (
-            f"\U0001f3af <b>Atlos Radar</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Categoria: {res['category']}</i>\n\n"
-            f"{res['editorial']}\n\n"
-            f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Reacciona con \U0001f44d o \U0001f44e para ensenar a la IA.</i>"
-        )
+        # Formato especial para Alertas de Crisis Global
+        if res.get('is_global_alert'):
+            message_text = (
+                f"🚨🚨🚨 <b>ALERTA GLOBAL — ORÁCULO DE PÁNICO</b> 🚨🚨🚨\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<b>⚠️ EVENTO CRÍTICO DETECTADO</b>\n"
+                f"<i>Categoría: {res['category']}</i>\n\n"
+                f"{res['editorial']}\n\n"
+                f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<i>Esta alerta se envió a TODOS los usuarios por protocolo de crisis.</i>"
+            )
+        else:
+            message_text = (
+                f"\U0001f3af <b>Atlos Radar</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<i>Categoria: {res['category']}</i>\n\n"
+                f"{res['editorial']}\n\n"
+                f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<i>Reacciona con \U0001f44d o \U0001f44e para ensenar a la IA.</i>"
+            )
         
         try:
             await bot.send_message(

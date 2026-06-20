@@ -166,9 +166,43 @@ async def manager_agent(news_items: list, karma_context: str, profile: dict, cli
     for item in news_items:
         cat = item.get("category", "General")
         title = item.get("title", "").lower()
+        # ---------------------------------------------------------------------------
+        # ORÁCULO DE PÁNICO GLOBAL — Detección de Crisis Planetarias
+        # Si la noticia contiene estas palabras, IGNORA todos los filtros del usuario
+        # y la envía como ALERTA ESPECIAL a VIP y Premium por igual.
+        # ---------------------------------------------------------------------------
+        GLOBAL_CRISIS_KEYWORDS = [
+            # Desastres Naturales
+            'terremoto', 'earthquake', 'tsunami', 'erupción volcánica', 'volcanic',
+            'huracán categoría', 'hurricane', 'tornado', 'inundación masiva', 'flood',
+            'incendio forestal', 'wildfire', 'sequía extrema', 'avalancha',
+            # Guerra y Conflicto
+            'guerra mundial', 'world war', 'invasión', 'invasion', 'nuclear',
+            'misil balístico', 'ballistic missile', 'bomba atómica', 'atomic',
+            'ataque aéreo masivo', 'genocidio', 'genocide', 'golpe de estado', 'coup',
+            'ley marcial', 'martial law',
+            # Terrorismo
+            'atentado terrorista', 'terrorist attack', 'ataque terrorista',
+            'bomba', 'explosión masiva', 'mass shooting', 'tiroteo masivo',
+            # Colapso Económico
+            'colapso', 'collapse', 'crash bursátil', 'stock crash', 'default soberano',
+            'hiperinflación', 'bank run', 'corrida bancaria', 'quiebra sistémica',
+            # Pandemia y Bioseguridad
+            'pandemia', 'pandemic', 'cuarentena global', 'lockdown', 'virus letal',
+            'emergencia sanitaria', 'bioterrorismo',
+            # Ciberseguridad Global
+            'hacker global', 'ciberataque masivo', 'cyberattack', 'apagón global',
+            'blackout', 'internet caído',
+            # Extraterrestres / Impacto Cósmico
+            'alien', 'extraterrestre', 'asteroide', 'asteroid', 'impacto cósmico',
+            'meteorito'
+        ]
         
-        # Override Global: Si es la Tercera Guerra Mundial o Invasión Alienígena, ignorar filtros
-        is_global_alert = any(word in title for word in ['guerra mundial', 'alien', 'extraterrestre', 'nuclear', 'hacker global', 'colapso'])
+        is_global_alert = any(word in title for word in GLOBAL_CRISIS_KEYWORDS)
+        
+        # Marcar la noticia como alerta global para formato especial
+        if is_global_alert:
+            item['is_global_alert'] = True
         
         if is_vip and not is_global_alert:
             # Leer las preferencias desde la base de datos (pasadas en el profile)
@@ -199,7 +233,8 @@ async def manager_agent(news_items: list, karma_context: str, profile: dict, cli
 
         resultados.append({
             "title": item.get("title"), "editorial": editorial, "link": item.get("link", ""), 
-            "category": cat, "news_id": item.get("id", "")
+            "category": cat, "news_id": item.get("id", ""),
+            "is_global_alert": item.get("is_global_alert", False)
         })
 
     return resultados
