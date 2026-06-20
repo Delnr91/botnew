@@ -25,39 +25,72 @@ from deep_translator import GoogleTranslator
 # 1. INICIALIZACIÓN
 # ---------------------------------------------------------------------------
 
-def init_llm_clients() -> dict:
-    clients: dict = {"groq": None, "gemini": None, "grok": None}
+def _parse_keys(env_name: str) -> list:
+    """Lee una variable de entorno y devuelve una lista de claves (separadas por coma).
+    Soporta 'sumar' cuotas free: GROQ_API_KEY=key1,key2,key3"""
+    raw = os.getenv(env_name, "") or ""
+    out = []
+    for k in raw.split(","):
+        k = k.strip()
+        if k and not k.startswith("tu_") and not k.startswith("YOUR_"):
+            out.append(k)
+    return out
 
-    groq_key = os.getenv("GROQ_API_KEY")
-    if groq_key and groq_key not in ("", "tu_api_key_de_groq_aqui"):
+def init_llm_clients() -> dict:
+    """Construye un POOL de clientes por proveedor (una entrada por clave).
+    Esto permite rotación ante 429 y sumar las cuotas free de varias cuentas."""
+    clients: dict = {"groq": [], "gemini": [], "grok": [], "openrouter": [], "github": []}
+
+    for key in _parse_keys("GROQ_API_KEY"):
         try:
-            clients["groq"] = AsyncGroq(api_key=groq_key)
-            logging.info("✅ Cliente Groq inicializado.")
+            clients["groq"].append(AsyncGroq(api_key=key))
         except Exception as e:
             logging.error(f"Error Groq: {e}")
+    if clients["groq"]:
+        logging.info(f"✅ Groq: {len(clients['groq'])} clave(s) en el pool.")
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key and gemini_key not in ("", "tu_api_key_de_gemini_aqui"):
+    # Gemini usa configuración global → usamos 1 clave (la primera).
+    gemini_keys = _parse_keys("GEMINI_API_KEY")
+    if gemini_keys:
         try:
-            genai.configure(api_key=gemini_key)
-            clients["gemini"] = genai.GenerativeModel("gemini-2.0-flash")
-            logging.info("✅ Cliente Gemini inicializado.")
+            genai.configure(api_key=gemini_keys[0])
+            clients["gemini"].append(genai.GenerativeModel("gemini-2.0-flash"))
+            logging.info("✅ Gemini inicializado (gemini-2.0-flash).")
         except Exception as e:
             logging.error(f"Error Gemini: {e}")
 
-    grok_key = os.getenv("GROK_API_KEY")
-    if grok_key and grok_key not in ("", "tu_api_key_de_grok_aqui"):
+    for key in _parse_keys("GROK_API_KEY"):
         try:
-            clients["grok"] = AsyncOpenAI(api_key=grok_key, base_url="https://api.x.ai/v1")
-            logging.info("✅ Cliente Grok/xAI inicializado.")
+            clients["grok"].append(AsyncOpenAI(api_key=key, base_url="https://api.x.ai/v1"))
         except Exception as e:
             logging.error(f"Error Grok/xAI: {e}")
+    if clients["grok"]:
+        logging.info(f"✅ Grok/xAI: {len(clients['grok'])} clave(s).")
+
+    # OpenRouter: una sola key da acceso a muchos modelos ':free'.
+    for key in _parse_keys("OPENROUTER_API_KEY"):
+        try:
+            clients["openrouter"].append(AsyncOpenAI(api_key=key, base_url="https://openrouter.ai/api/v1"))
+        except Exception as e:
+            logging.error(f"Error OpenRouter: {e}")
+    if clients["openrouter"]:
+        logging.info(f"✅ OpenRouter: {len(clients['openrouter'])} clave(s) (modelos :free).")
+
+    # GitHub Models (free para cuentas GitHub) vía endpoint compatible OpenAI.
+    for key in _parse_keys("GITHUB_MODELS_TOKEN") or _parse_keys("GITHUB_TOKEN"):
+        try:
+            clients["github"].append(AsyncOpenAI(api_key=key, base_url="https://models.inference.ai.azure.com"))
+        except Exception as e:
+            logging.error(f"Error GitHub Models: {e}")
+    if clients["github"]:
+        logging.info(f"✅ GitHub Models: {len(clients['github'])} clave(s).")
 
     return clients
 
 async def transcribe_audio(clients: dict, file_path: str) -> str:
-    """Convierte audio a texto usando Groq Whisper."""
-    client = clients.get("groq")
+    """Convierte audio a texto usando Groq Whisper (primer cliente del pool)."""
+    pool = clients.get("groq") or []
+    client = pool[0] if pool else None
     if not client:
         return "Error: Motor de voz (Groq) no disponible."
     try:
@@ -71,17 +104,19 @@ async def transcribe_audio(clients: dict, file_path: str) -> str:
         return "Lo siento, no pude entender el audio."
 
 # ---------------------------------------------------------------------------
-# 2. ENRUTADOR MULTI-LLM
+# 2. ENRUTADOR MULTI-LLM (pool de claves + rotación ante 429)
 # ---------------------------------------------------------------------------
-FALLBACK_ORDER = ["groq", "gemini", "grok"]
-LLM_MODELS = {"groq": "llama-3.1-8b-instant", "gemini": "gemini-1.5-flash", "grok": "grok-3-mini"}
+FALLBACK_ORDER = ["groq", "gemini", "openrouter", "github", "grok"]
+LLM_MODELS = {
+    "groq": "llama-3.1-8b-instant",
+    "gemini": "gemini-2.0-flash",
+    "grok": "grok-3-mini",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "github": "gpt-4o-mini",
+}
 
-async def _call_groq(client: AsyncGroq, prompt: str, system: str, max_tokens: int) -> str:
-    response = await client.chat.completions.create(
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        model=LLM_MODELS["groq"], temperature=0.3, max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content.strip()
+# Estado de rotación por proveedor (round-robin entre claves del pool)
+_rotation: dict = {}
 
 async def _call_gemini(client, prompt: str, system: str, max_tokens: int) -> str:
     full_prompt = f"[INSTRUCCIONES]\n{system}\n\n[USUARIO]\n{prompt}"
@@ -90,14 +125,27 @@ async def _call_gemini(client, prompt: str, system: str, max_tokens: int) -> str
     )
     return response.text.strip()
 
-async def _call_grok(client: AsyncOpenAI, prompt: str, system: str, max_tokens: int) -> str:
-    response = await client.chat.completions.create(
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        model=LLM_MODELS["grok"], temperature=0.3, max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content.strip()
+def _make_openai_caller(provider: str):
+    """Fábrica de callers para proveedores compatibles con la API de OpenAI."""
+    async def _caller(client, prompt: str, system: str, max_tokens: int) -> str:
+        response = await client.chat.completions.create(
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            model=LLM_MODELS[provider], temperature=0.3, max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
+    return _caller
 
-_LLM_CALLERS = {"groq": _call_groq, "gemini": _call_gemini, "grok": _call_grok}
+_LLM_CALLERS = {
+    "groq": _make_openai_caller("groq"),
+    "gemini": _call_gemini,
+    "grok": _make_openai_caller("grok"),
+    "openrouter": _make_openai_caller("openrouter"),
+    "github": _make_openai_caller("github"),
+}
+
+def _is_rate_limit(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(s in msg for s in ("429", "rate limit", "rate_limit", "quota", "resource_exhausted", "too many requests"))
 
 # ---------------------------------------------------------------------------
 # ORÁCULO DE PÁNICO GLOBAL — Detección de Crisis Planetarias (nivel módulo)
@@ -138,17 +186,32 @@ def detect_global_alert(title: str) -> bool:
     return any(word in t for word in GLOBAL_CRISIS_KEYWORDS)
 
 async def call_llm(prompt: str, system: str, clients: dict, preferred: str = "groq", max_tokens: int = 300) -> str:
+    """Router con fallback entre proveedores y rotación de claves dentro de cada pool.
+    Ante 429/cuota agotada rota a la siguiente clave; si el pool entero falla, pasa
+    al siguiente proveedor. Así se 'suman' las cuotas gratis de varias cuentas."""
     orden = [preferred] + [p for p in FALLBACK_ORDER if p != preferred]
     for provider in orden:
-        client = clients.get(provider)
-        if not client: continue
+        pool = clients.get(provider) or []
         caller = _LLM_CALLERS.get(provider)
-        if not caller: continue
-        try:
-            res = await caller(client, prompt, system, max_tokens)
-            if res: return res
-        except Exception as e:
-            logging.error(f"Error llamando a {provider}: {e}")
+        if not pool or not caller:
+            continue
+        n = len(pool)
+        start = _rotation.get(provider, 0) % n
+        for i in range(n):
+            idx = (start + i) % n
+            client = pool[idx]
+            try:
+                res = await caller(client, prompt, system, max_tokens)
+                if res:
+                    _rotation[provider] = idx  # nos quedamos en la clave que funcionó
+                    return res
+            except Exception as e:
+                if _is_rate_limit(e):
+                    _rotation[provider] = (idx + 1) % n  # rotar a la siguiente clave
+                    logging.warning(f"⚠️ {provider} clave#{idx} con rate-limit; rotando.")
+                    continue
+                logging.error(f"Error llamando a {provider} clave#{idx}: {e}")
+                continue
     return ""
 
 # ---------------------------------------------------------------------------
@@ -166,6 +229,21 @@ def psychologist_agent(profile: dict) -> str:
         return "Escribe como un experto en crypto. Usa términos como 'bull market', 'HODL' y muchos emojis de cohetes 🚀."
     else:
         return "Escribe de forma clara, amistosa y accesible. Como un mentor inteligente pero relajado."
+
+async def health_coach_agent(clients: dict, profile: dict = None) -> str:
+    """Coach de Salud: un consejo breve, práctico y motivador para hoy."""
+    contexto = ""
+    if profile:
+        edad = profile.get("age")
+        if edad:
+            contexto = f" El usuario tiene {edad} años."
+    sys = ("Eres el Coach de Salud y Longevidad de Atlos. Da UN consejo de bienestar "
+           "para HOY: práctico, accionable y motivador. Máximo 2 frases cortas. Español neutro."
+           + contexto)
+    try:
+        return await call_llm("Dame el consejo de salud de hoy.", sys, clients, "groq", 120)
+    except Exception:
+        return ""
 
 async def quant_agent(news_item: dict, clients: dict, is_vip: bool) -> dict:
     if is_vip:

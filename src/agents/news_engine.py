@@ -21,10 +21,36 @@ from src.services.rss_fetcher import fetch_latest_news
 from src.agents.engine import (
     quant_agent, editor_agent, psychologist_agent, detect_global_alert,
 )
+from src.core.cache import cache_get_json, cache_set_json, enabled as cache_enabled
 
 # Caché central en memoria (un solo proceso orquestador)
 _CACHE = {"items": [], "ts": None}
 CACHE_TTL_SECONDS = 1800  # 30 min: ventana de frescura antes de reprocesar
+REDIS_KEY = "atlos:news_cache"
+
+
+async def load_persisted_cache() -> int:
+    """Al arrancar, intenta restaurar el caché desde Redis (sobrevive reinicios)."""
+    if not cache_enabled():
+        return 0
+    try:
+        data = await cache_get_json(REDIS_KEY)
+        if data and data.get("items"):
+            _CACHE["items"] = data["items"]
+            ts = data.get("ts")
+            _CACHE["ts"] = datetime.fromisoformat(ts) if ts else None
+            logging.info(f"NewsEngine: caché restaurado desde Redis ({len(data['items'])} noticias).")
+            return len(data["items"])
+    except Exception as e:
+        logging.error(f"No se pudo restaurar caché desde Redis: {e}")
+    return 0
+
+
+async def _persist_cache():
+    if not cache_enabled():
+        return
+    ts = _CACHE["ts"].isoformat() if _CACHE["ts"] else None
+    await cache_set_json(REDIS_KEY, {"items": _CACHE["items"], "ts": ts}, ttl=CACHE_TTL_SECONDS)
 
 # Tono neutro/amistoso por defecto para la redacción central (1 sola versión).
 # La personalización de tono por usuario es una capa posterior y barata.
@@ -94,6 +120,7 @@ async def refresh_news_cache(clients: dict, karma_context: str = "", force: bool
 
     _CACHE["items"] = procesadas
     _CACHE["ts"] = datetime.now(timezone.utc)
+    await _persist_cache()
     logging.info(f"NewsEngine: caché refrescado con {len(procesadas)} noticias procesadas "
                  f"(de {len(unique)} únicas / {len(raw)} brutas).")
     return procesadas

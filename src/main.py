@@ -11,17 +11,19 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     LinkPreviewOptions, ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
-    PreCheckoutQuery, LabeledPrice
+    PreCheckoutQuery, LabeledPrice, FSInputFile
 )
+from urllib.parse import quote
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 load_dotenv()
 
 from src.core.database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
 from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location, get_troll_strikes, add_troll_strike
-from src.agents.engine import init_llm_clients, manager_agent, transcribe_audio, conversational_agent
-from src.agents.news_engine import refresh_news_cache, select_for_user
-from src.services.oracles import get_weather_and_aqi, get_btc_oracle
+from src.agents.engine import init_llm_clients, manager_agent, transcribe_audio, conversational_agent, health_coach_agent
+from src.agents.news_engine import refresh_news_cache, select_for_user, load_persisted_cache
+from src.services.oracles import get_weather_and_aqi, get_btc_oracle, get_market_snapshot
+from src.services.voice import text_to_speech, tts_available
 from src.services.rss_fetcher import fetch_latest_news
 from src.agents.marketing import generate_marketing_campaign
 from src.services.payments import (
@@ -103,8 +105,17 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
             )
         
         try:
+            # Portada generada (gratis, Pollinations) solo para alertas globales: más impacto visual.
+            if res.get('is_global_alert') and os.getenv("ENABLE_ALERT_IMAGES", "1") == "1":
+                try:
+                    prompt_img = quote(f"dramatic cinematic breaking news cover about {res['category']}, dark dramatic lighting, photorealistic")
+                    img_url = f"https://image.pollinations.ai/prompt/{prompt_img}?width=1024&height=576&nologo=true"
+                    await bot.send_photo(chat_id=chat_id, photo=img_url)
+                except Exception:
+                    pass
+
             await bot.send_message(
-                chat_id=chat_id, 
+                chat_id=chat_id,
                 text=message_text,
                 reply_markup=karma_kb,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -134,6 +145,9 @@ async def scheduled_morning():
     # Refrescamos el caché una vez antes de repartir el resumen matutino.
     await refresh_news_cache(llm_clients, karma_context=get_karma_lessons(limit=5), force=True)
 
+    # Consejo de salud del día: 1 sola llamada LLM, reutilizada para todos.
+    health_tip = await health_coach_agent(llm_clients)
+
     users = get_all_users()
     free_users = [u['user_id'] for u in users if not check_vip_status(u['user_id'])['is_vip']]
 
@@ -145,6 +159,8 @@ async def scheduled_morning():
             reporte = f"☀️ <b>Buenos días. Aquí tu reporte diario de Atlos.</b>\n\n"
             if clima['status'] == 'ok':
                 reporte += f"☁️ <b>Clima ({clima['location']}):</b> {clima['temp']}C\n\n"
+            if health_tip:
+                reporte += f"🩺 <b>Consejo de hoy:</b> {health_tip}\n\n"
             await bot.send_message(user_id, reporte)
             await process_and_send_news(user_id, limit=3, silent_if_empty=True)
             
@@ -716,7 +732,7 @@ async def handle_voice(message: types.Message):
         if clima['status'] == 'ok':
             context_data += f" [CLIMA] Actual en {clima['location']}: {clima['temp']}C, {clima['description']}, calidad del aire {clima.get('aqi','')}."
 
-    if any(k in texto_lower for k in ("invertir", "inversión", "inversion", "bitcoin", "btc", "cripto", "crypto", "mercado", "ethereum", "solana", "bolsa")):
+    if any(k in texto_lower for k in ("invertir", "inversión", "inversion", "bitcoin", "btc", "cripto", "crypto", "mercado", "ethereum", "solana", "bolsa", "acciones", "nasdaq")):
         btc = await get_btc_oracle()
         if btc.get('status') == 'ok':
             context_data += (
@@ -724,6 +740,10 @@ async def handle_voice(message: types.Message):
                 f"Ethereum ${btc.get('eth_price', 0):,.2f}, Solana ${btc.get('sol_price', 0):,.2f}, "
                 f"sentimiento macro: {btc.get('sentiment', 'N/D')}."
             )
+        # Snapshot de acciones (Finnhub free) si está configurado
+        bolsa = await get_market_snapshot()
+        if bolsa:
+            context_data += f" [BOLSA] {bolsa}"
 
     # Consultar al agente
     res = await conversational_agent(texto_transcrito, check_vip_status(user_id), llm_clients, context_data)
@@ -733,6 +753,18 @@ async def handle_voice(message: types.Message):
         await message.answer(f"⚠️ {res['response']}\n<i>Strikes restantes: {strikes_left}</i>")
     else:
         await message.answer(f"🧠 <b>Atlos:</b>\n{res['response']}")
+        # WOW VIP: Atlos también RESPONDE en audio (Edge-TTS, gratis)
+        if tts_available():
+            audio_path = f"reply_{user_id}.mp3"
+            try:
+                if await text_to_speech(res['response'], audio_path):
+                    await message.answer_audio(FSInputFile(audio_path), title="Atlos", performer="Atlos IA")
+            except Exception as e:
+                import logging
+                logging.error(f"Error enviando audio TTS: {e}")
+            finally:
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
 
 @dp.message(F.text.contains("Sobre Atlos"))
 @dp.message(Command('about'))
@@ -835,7 +867,10 @@ async def main():
     init_memory_db()
     init_payment_tables()
     llm_clients = init_llm_clients()
-    
+
+    # Restaura el caché de noticias desde Redis (si está configurado) tras un reinicio.
+    await load_persisted_cache()
+
     scheduler = AsyncIOScheduler()
     scheduler.add_job(scheduled_job, 'interval', minutes=FETCH_INTERVAL_MINUTES) # PUSH VIP 24/7
     scheduler.add_job(scheduled_morning, 'cron', hour=8, minute=0) # Resumen Diario Free a las 8:00 AM
