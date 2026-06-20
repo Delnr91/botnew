@@ -38,7 +38,7 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=Pars
 dp = Dispatcher()
 llm_clients = {}
 
-async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: bool = False):
+async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: bool = False, ignore_sent_filter: bool = False):
     user_id = str(chat_id)
     profile = get_or_create_user_profile(user_id)
     vip_status = check_vip_status(user_id)
@@ -50,7 +50,12 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
         if not silent_if_empty:
             await bot.send_message(chat_id, "📡 Radar despejado. No hay noticias nuevas en el mercado en este momento.")
         return
-    nuevas_noticias = [item for item in news_items if not is_news_sent(item['id'])][:limit]
+        
+    if ignore_sent_filter:
+        nuevas_noticias = news_items[:limit]
+    else:
+        nuevas_noticias = [item for item in news_items if not is_news_sent(item['id'], user_id)][:limit]
+        
     if not nuevas_noticias:
         if not silent_if_empty:
             await bot.send_message(chat_id, "📡 Ya estás al día. Has leído todas las noticias de alto impacto por ahora.")
@@ -111,7 +116,7 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
                 reply_markup=karma_kb,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
-            mark_news_as_sent(res['news_id'], res['title'], res['category'])
+            mark_news_as_sent(res['news_id'], res['title'], res['category'], user_id=user_id)
             enviadas += 1
             await asyncio.sleep(2)
         except Exception as e:
@@ -315,10 +320,11 @@ async def cmd_morning(message: types.Message):
 async def cmd_latest(message: types.Message):
     await message.answer("Nuestros agentes estan analizando el mercado global. Un momento... \u23f3")
     try:
-        await process_and_send_news(str(message.chat.id), limit=2)
+        await process_and_send_news(str(message.chat.id), limit=2, ignore_sent_filter=True)
     except Exception as e:
         import logging
-        logging.error(f"Error en Pulso del Mercado: {e}")
+        import traceback
+        logging.error(f"Error en Pulso del Mercado: {e}\n{traceback.format_exc()}")
         await message.answer("📡 He peinado la red y el mercado está en absoluto silencio. Ninguna noticia de alto impacto detectada por ahora.")
 
 @dp.message(Command('ciudad'))

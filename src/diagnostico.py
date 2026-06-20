@@ -11,11 +11,10 @@ from src.core.database import init_db, is_news_sent
 
 async def main():
     print("=" * 60)
-    print("🔍 DIAGNÓSTICO DE FEEDS RSS — ATLOS")
+    print("DIAGNOSTICO DE FEEDS RSS")
     print("=" * 60)
     
-    # Test 1: Fetch de todos los feeds
-    print("\n📡 Test 1: Fetching ALL RSS feeds (como VIP)...")
+    print("\nTest 1: Fetching ALL RSS feeds (como VIP)...")
     try:
         news = await fetch_latest_news(limit_per_feed=2, is_vip=True)
         print(f"   ✅ Total noticias obtenidas: {len(news)}")

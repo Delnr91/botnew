@@ -118,11 +118,13 @@ async def call_llm(prompt: str, system: str, clients: dict, preferred: str = "gr
 # ---------------------------------------------------------------------------
 
 def psychologist_agent(profile: dict) -> str:
-    """Define la personalidad de Atlos basado en el usuario."""
-    prefs = profile.get('preferences', '')
-    if "formal" in prefs.lower():
+    """Asigna un tono según las preferencias del usuario (o default)."""
+    prefs_raw = profile.get("preferences") or {}
+    prefs_str = str(prefs_raw).lower()
+    
+    if "formal" in prefs_str:
         return "Escribe de forma extremadamente formal, profesional y elegante. Usa 'Usted'."
-    elif "crypto_bro" in prefs.lower():
+    elif "crypto_bro" in prefs_str:
         return "Escribe como un experto en crypto. Usa términos como 'bull market', 'HODL' y muchos emojis de cohetes 🚀."
     else:
         return "Escribe de forma clara, amistosa y accesible. Como un mentor inteligente pero relajado."
@@ -207,11 +209,14 @@ async def manager_agent(news_items: list, karma_context: str, profile: dict, cli
         if is_vip and not is_global_alert:
             # Leer las preferencias desde la base de datos (pasadas en el profile)
             import json
-            prefs_str = profile.get("preferences", "")
-            try:
-                prefs = json.loads(prefs_str) if prefs_str else {}
-            except:
-                prefs = {}
+            prefs_raw = profile.get("preferences") or {}
+            if isinstance(prefs_raw, str):
+                try:
+                    prefs = json.loads(prefs_raw)
+                except:
+                    prefs = {}
+            else:
+                prefs = prefs_raw
             # Si el usuario explícitamente apagó la categoría, la saltamos
             if prefs.get(cat, True) == False:
                 continue

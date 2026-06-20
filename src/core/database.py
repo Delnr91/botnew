@@ -25,24 +25,26 @@ def init_db():
     except Exception as e:
         logging.error(f"Error conectando a Supabase: {e}")
 
-def is_news_sent(news_id: str) -> bool:
-    """Verifica en Supabase si la noticia ya fue enviada."""
+def is_news_sent(news_id: str, user_id: str = None) -> bool:
+    """Verifica en Supabase si la noticia ya fue enviada a ese usuario."""
     if not supabase: return False
     try:
-        response = supabase.table('sent_news').select('id').eq('id', news_id).execute()
+        record_id = f"{news_id}_{user_id}" if user_id else news_id
+        response = supabase.table('sent_news').select('id').eq('id', record_id).execute()
         return len(response.data) > 0
     except Exception as e:
         logging.error(f"Error comprobando is_news_sent en Supabase: {e}")
         return False
 
-def mark_news_as_sent(news_id: str, title: str, source: str):
-    """Guarda en Supabase que la noticia fue enviada."""
+def mark_news_as_sent(news_id: str, title: str, source: str, user_id: str = None):
+    """Guarda en Supabase que la noticia fue enviada a ese usuario."""
     if not supabase: return
     try:
+        record_id = f"{news_id}_{user_id}" if user_id else news_id
         supabase.table('sent_news').insert({
-            'id': news_id,
-            'title': title,
-            'source': source
+            'id': record_id[:250], # Límite por si el URL es muy largo
+            'title': title[:250],
+            'source': source[:100]
         }).execute()
     except Exception as e:
         logging.error(f"Error marcando noticia como enviada en Supabase: {e}")

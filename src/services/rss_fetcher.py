@@ -118,16 +118,18 @@ async def fetch_latest_news(limit_per_feed: int = 2, is_vip: bool = False) -> Li
     fetch_limit = 4 if is_vip else 1
     
     tasks = []
-    # Lanzar todas las peticiones asíncronas en paralelo para máxima velocidad
-    for category, urls in RSS_FEEDS.items():
+    # Lanzar peticiones con un pequeño desfase para no saturar Reddit (Rate Limit)
+    for i, (category, urls) in enumerate(RSS_FEEDS.items()):
         for url in urls:
             tasks.append(fetch_rss_feed(url, category, limit=fetch_limit))
             
-    # Esperar a que todos los Scouters vuelvan con la info
-    results = await asyncio.gather(*tasks)
-    
-    # Aplanar la lista de listas
-    for result_list in results:
-        all_news.extend(result_list)
+    # Ejecutamos en lotes de 3 para no golpear la misma IP 25 veces por segundo
+    batch_size = 3
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i:i+batch_size]
+        results = await asyncio.gather(*batch)
+        for result_list in results:
+            all_news.extend(result_list)
+        await asyncio.sleep(1) # Pausa de 1 seg entre lotes
         
     return all_news
