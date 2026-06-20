@@ -8,9 +8,9 @@ sudo apt-get install -y python3 python3-pip python3-venv git screen
 
 # Crear entorno virtual
 cd /home
-# IMPORTANTE: Reemplaza Atlosbots/atlos por tu nombre de usuario y repo si cambia
-git clone https://github.com/Atlosbots/atlos.git || true
-cd atlos
+# IMPORTANTE: Reemplaza delnr91/botnew por tu nombre de usuario y repo si cambia
+git clone https://github.com/delnr91/botnew.git || true
+cd botnew
 
 # Crear el archivo .env con las credenciales (Debes inyectar esto manualmente o a través de Secrets)
 cat <<EOT >> .env
