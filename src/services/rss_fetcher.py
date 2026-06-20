@@ -10,55 +10,59 @@ import asyncio
 
 RSS_FEEDS = {
     "Deep Tech e IA": [
-        "https://www.reddit.com/r/artificial/top.rss?t=day",
-        "https://www.reddit.com/r/technology/top.rss?t=day",
-        "https://techcrunch.com/feed/"
+        "https://techcrunch.com/feed/",
+        "https://www.wired.com/feed/rss",
+        "https://www.reddit.com/r/artificial/top.rss?t=day"
     ],
     "Geopolítica y Guerra": [
-        "https://www.reddit.com/r/worldnews/top.rss?t=day",
+        "http://feeds.bbci.co.uk/news/world/rss.xml",
+        "https://www.aljazeera.com/xml/rss/all.xml",
         "https://www.reddit.com/r/geopolitics/top.rss?t=day"
     ],
     "Criptomonedas": [
-        "https://www.reddit.com/r/CryptoCurrency/top.rss?t=day",
-        "https://cointelegraph.com/rss"
+        "https://cointelegraph.com/rss",
+        "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "https://cryptonews.com/news/feed/"
     ],
     "Mercados y Wall Street": [
-        "https://www.reddit.com/r/wallstreetbets/top.rss?t=day",
-        "https://www.reddit.com/r/investing/top.rss?t=day"
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",
+        "https://www.investing.com/rss/news_25.rss",
+        "https://www.reddit.com/r/wallstreetbets/top.rss?t=day"
     ],
     "Deportes": [
-        "https://www.reddit.com/r/sports/top.rss?t=day",
-        "https://www.espn.com/espn/rss/news"
+        "https://e00-marca.uecdn.es/rss/futbol/primera-division.xml",
+        "https://www.espn.com/espn/rss/news",
+        "https://sports.yahoo.com/rss/"
     ],
     "Astronomía y Ciencia": [
-        "https://www.reddit.com/r/space/top.rss?t=day",
-        "https://www.reddit.com/r/science/top.rss?t=day"
+        "https://www.space.com/feeds/all",
+        "https://www.sciencenews.org/feed"
     ],
     "Entretenimiento y Cultura": [
-        "https://www.reddit.com/r/movies/top.rss?t=day",
-        "https://www.reddit.com/r/television/top.rss?t=day"
+        "https://variety.com/feed/",
+        "https://www.hollywoodreporter.com/feed/"
     ],
     "Salud y Bienestar": [
-        "https://www.reddit.com/r/Health/top.rss?t=day",
-        "https://www.reddit.com/r/biohackers/top.rss?t=day"
+        "https://www.medicalnewstoday.com/feed",
+        "https://www.healthline.com/rss"
     ],
     "Viajes y Estilo de Vida": [
-        "https://www.reddit.com/r/travel/top.rss?t=day"
+        "https://www.lonelyplanet.com/news/feed"
     ],
     "Videojuegos y E-Sports": [
-        "https://www.reddit.com/r/gaming/top.rss?t=day",
-        "https://www.reddit.com/r/esports/top.rss?t=day"
+        "https://feeds.feedburner.com/ign/all",
+        "https://www.polygon.com/rss/index.xml"
     ],
     "Clima y Sostenibilidad": [
-        "https://www.reddit.com/r/environment/top.rss?t=day"
+        "https://www.nationalgeographic.com/environment/rss" # Reemplazar después si es de pago
     ],
     "Startups y Negocios": [
-        "https://www.reddit.com/r/Entrepreneur/top.rss?t=day",
-        "https://www.reddit.com/r/startups/top.rss?t=day"
+        "https://www.entrepreneur.com/latest.rss",
+        "https://feeds.feedburner.com/TechCrunch/startups"
     ],
     "Motor y Automovilismo": [
-        "https://www.reddit.com/r/formula1/top.rss?t=day",
-        "https://www.reddit.com/r/cars/top.rss?t=day"
+        "https://www.motorsport.com/rss/f1/news/",
+        "https://www.autoblog.com/rss.xml"
     ]
 }
 
