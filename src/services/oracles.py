@@ -54,24 +54,38 @@ async def get_weather_and_aqi(location: str = "Bogota") -> dict:
 
 async def get_btc_oracle() -> dict:
     """
-    Oráculo Financiero: Obtiene el precio de BTC y datos macro usando CoinGecko (Gratis).
+    Oráculo Financiero VIP: Obtiene el precio de BTC, ETH, SOL y calcula el sentimiento macro.
     """
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true"
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
+            async with session.get(url, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    btc_usd = data['bitcoin']['usd']
-                    change_24h = data['bitcoin']['usd_24h_change']
+                    
+                    btc_data = data.get('bitcoin', {})
+                    eth_data = data.get('ethereum', {})
+                    sol_data = data.get('solana', {})
+                    
+                    btc_price = btc_data.get('usd', 0)
+                    btc_change = btc_data.get('usd_24h_change', 0)
+                    eth_price = eth_data.get('usd', 0)
+                    sol_price = sol_data.get('usd', 0)
+                    
+                    if btc_change > 2: sentiment = "Alcista 🚀"
+                    elif btc_change < -2: sentiment = "Bajista 🩸"
+                    else: sentiment = "Consolidación ⚖️"
+                    
                     return {
-                        "status": "ok",
-                        "price": btc_usd,
-                        "change": change_24h,
-                        "trend": "alcista 🐂" if change_24h > 0 else "bajista 🐻"
+                        "status": "ok", 
+                        "price": btc_price, 
+                        "change": round(btc_change, 2),
+                        "eth_price": eth_price,
+                        "sol_price": sol_price,
+                        "sentiment": sentiment
                     }
                 else:
                     return {"status": "error"}
     except Exception as e:
-        logging.error(f"Error en Oráculo BTC: {e}")
+        logging.error(f"Error en Oráculo Crypto: {e}")
         return {"status": "error"}

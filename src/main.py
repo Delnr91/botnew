@@ -14,10 +14,11 @@ from aiogram.types import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
+load_dotenv()
 
 from src.core.database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
-from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location
-from src.agents.engine import process_and_send_news, init_llm_clients, manager_agent, transcribe_audio
+from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location, get_troll_strikes, add_troll_strike
+from src.agents.engine import process_and_send_news, init_llm_clients, manager_agent, transcribe_audio, conversational_agent
 from src.services.oracles import get_weather_and_aqi, get_btc_oracle
 from src.services.rss_fetcher import fetch_latest_news
 from src.agents.marketing import generate_marketing_campaign
@@ -28,7 +29,6 @@ from src.services.payments import (
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 FETCH_INTERVAL_MINUTES = int(os.getenv('FETCH_INTERVAL_MINUTES', 120))
@@ -250,7 +250,12 @@ async def cmd_morning(message: types.Message):
             reporte += "<i>(📍 Escribe /ciudad TuCiudad para personalizar el clima)</i>\n"
         reporte += "\n"
     if btc['status'] == 'ok':
-        reporte += f"💰 <b>Bitcoin:</b> ${btc['price']:,.2f} ({btc['trend']})\n\n"
+        reporte += f"💰 <b>Bitcoin:</b> ${btc['price']:,.2f} ({btc['change']}%)\n"
+        if is_vip:
+            reporte += f"💎 <b>Ethereum:</b> ${btc.get('eth_price', 0):,.2f}\n"
+            reporte += f"🚀 <b>Solana:</b> ${btc.get('sol_price', 0):,.2f}\n"
+            reporte += f"🧠 <b>Sentimiento Macro:</b> {btc.get('sentiment', '')}\n"
+        reporte += "\n"
         
     await message.answer(reporte)
     await process_and_send_news(str(message.chat.id), limit=3)
@@ -269,7 +274,12 @@ async def cmd_morning(message: types.Message):
 @dp.message(Command('latest'))
 async def cmd_latest(message: types.Message):
     await message.answer("Nuestros agentes estan analizando el mercado global. Un momento... \u23f3")
-    await process_and_send_news(str(message.chat.id), limit=2)
+    try:
+        await process_and_send_news(str(message.chat.id), limit=2)
+    except Exception as e:
+        import logging
+        logging.error(f"Error en Pulso del Mercado: {e}")
+        await message.answer("📡 He peinado la red y el mercado está en absoluto silencio. Ninguna noticia de alto impacto detectada por ahora.")
 
 @dp.message(Command('ciudad'))
 async def cmd_ciudad(message: types.Message):
@@ -301,6 +311,9 @@ def get_panel_keyboard(prefs: dict):
         status = prefs.get(cat, True)
         icono = "✅" if status else "❌"
         inline_kb.append([InlineKeyboardButton(text=f"{icono} {cat}", callback_data=f"toggle_{cat}")])
+    
+    # Botón de Cerrar Panel
+    inline_kb.append([InlineKeyboardButton(text="✅ Guardar y Cerrar Panel", callback_data="close_panel")])
     return InlineKeyboardMarkup(inline_keyboard=inline_kb)
 
 @dp.message(F.text.contains("Panel de Control VIP"))
@@ -320,6 +333,22 @@ async def cmd_panel(message: types.Message):
         "<i>Nota: Si ocurre una alerta global crítica (Ej. Tercera Guerra Mundial), el radar hará override y te notificará igual.</i>",
         reply_markup=get_panel_keyboard(prefs)
     )
+
+@dp.callback_query(F.data == "open_panel")
+async def process_open_panel(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    prefs = get_user_preferences(user_id)
+    await callback.message.edit_text(
+        "🧠 <b>Panel Omnisciente Atlos</b>\n\n"
+        "Configura tu Radar Personal. Apaga las fuentes que no te interesen.\n"
+        "<i>Nota: Si ocurre una alerta global crítica, el radar hará override.</i>",
+        reply_markup=get_panel_keyboard(prefs)
+    )
+
+@dp.callback_query(F.data == "close_panel")
+async def process_close_panel(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Panel Omnisciente cerrado.")
 
 @dp.callback_query(F.data.startswith("toggle_"))
 async def process_toggle(callback: CallbackQuery):
@@ -344,15 +373,23 @@ async def cmd_premium(message: types.Message):
     vip = check_vip_status(user_id)
     
     if vip['is_vip']:
-        await message.answer(
-            f"\u2705 <b>Ya eres miembro VIP</b>\n\n"
-            f"Tu membresia esta activa por <b>{vip['days_left']} dias mas</b>.\n\n"
-            f"Disfruta de:\n"
-            f"• \U0001f399\ufe0f Comandos de Voz ilimitados\n"
-            f"• \U0001f9ec Agente Coach (Salud y Longevidad)\n"
-            f"• \U0001f4ca Analisis profundo del Quant\n"
-            f"• \U0001f52e Oraculo Avanzado de BTC"
+        # Dashboard VIP Interactivo
+        dashboard_text = (
+            f"👑 <b>DASHBOARD VIP</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Tu nivel de acceso es <b>Omnisciente</b> (Quedan {vip['days_left']} días).\n\n"
+            f"🎙️ <b>Inteligencia de Voz Activa:</b>\n"
+            f"Mantén presionado el ícono del micrófono en Telegram y háblame. "
+            f"Pregúntame sobre el clima de tu ciudad, el precio del Bitcoin, o pídeme "
+            f"que analice el mercado de valores. Atlos te escuchará y responderá.\n\n"
+            f"⚙️ <b>Radar de Noticias Personalizado:</b>\n"
+            f"Usa el botón de abajo para encender o apagar las categorías de tu radar."
         )
+        
+        dashboard_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Abrir Panel Omnisciente", callback_data="open_panel")]
+        ])
+        await message.answer(dashboard_text, reply_markup=dashboard_kb)
         return
     
     premium_text = (
@@ -532,7 +569,38 @@ async def handle_voice(message: types.Message):
     if os.path.exists(file_path):
         os.remove(file_path)
         
-    await message.reply(f"\U0001f5e3\ufe0f <b>Tu dijiste:</b> {texto_transcrito}\n\n<i>(En el futuro, Atlos te respondera contextualmente a esto).</i>")
+    strikes = get_troll_strikes(user_id)
+    if strikes <= 0:
+        await message.reply("🚫 <b>Acceso Restringido.</b> Has acumulado demasiados strikes por comportamiento inadecuado. El protocolo Anti-Troll ha bloqueado tu perfil temporalmente.")
+        return
+        
+    await message.reply(f"\U0001f5e3\ufe0f <b>Transcripción:</b> {texto_transcrito}\n\n<i>Analizando...</i>")
+    
+    # Preparar contexto si preguntan por clima o tiempo
+    context_data = ""
+    texto_lower = texto_transcrito.lower()
+    if "clima" in texto_lower or "tiempo" in texto_lower or "temperatura" in texto_lower:
+        profile = get_or_create_user_profile(user_id)
+        ciudad = profile.get('city') or "Bogota"
+        # Extract city from text if specified, very basic heuristic
+        words = texto_lower.split()
+        if "en" in words:
+            idx = words.index("en")
+            if idx + 1 < len(words):
+                ciudad = words[idx + 1].capitalize()
+        
+        clima = await get_weather_and_aqi(ciudad)
+        if clima['status'] == 'ok':
+            context_data = f"Datos del Clima actual en {clima['location']}: {clima['temp']}C, {clima['description']}."
+            
+    # Consultar al agente
+    res = await conversational_agent(texto_transcrito, check_vip_status(user_id), llm_clients, context_data)
+    
+    if res["strike"]:
+        strikes_left = add_troll_strike(user_id)
+        await message.answer(f"⚠️ {res['response']}\n<i>Strikes restantes: {strikes_left}</i>")
+    else:
+        await message.answer(f"🧠 <b>Atlos:</b>\n{res['response']}")
 
 @dp.message(F.text.contains("Sobre Atlos"))
 @dp.message(Command('about'))

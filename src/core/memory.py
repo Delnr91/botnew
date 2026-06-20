@@ -98,6 +98,35 @@ def update_user_demographics(user_id: str, age: int, gender: str):
     except Exception as e:
         logging.error(f"Error actualizando demografía: {e}")
 
+def get_troll_strikes(user_id: str) -> int:
+    profile = get_or_create_user_profile(user_id)
+    prefs = profile.get('preferences', {})
+    if isinstance(prefs, str):
+        import json
+        try: prefs = json.loads(prefs)
+        except: prefs = {}
+    return prefs.get('strikes', 3)
+
+def add_troll_strike(user_id: str) -> int:
+    profile = get_or_create_user_profile(user_id)
+    prefs = profile.get('preferences', {})
+    if isinstance(prefs, str):
+        import json
+        try: prefs = json.loads(prefs)
+        except: prefs = {}
+        
+    current_strikes = prefs.get('strikes', 3)
+    new_strikes = max(0, current_strikes - 1)
+    prefs['strikes'] = new_strikes
+    
+    if supabase:
+        try:
+            supabase.table('user_profiles').update({'preferences': prefs}).eq('user_id', str(user_id)).execute()
+        except Exception as e:
+            logging.error(f"Error updating strikes: {e}")
+            
+    return new_strikes
+
 def get_user_preferences(user_id: str) -> dict:
     profile = get_or_create_user_profile(user_id)
     prefs = profile.get('preferences', {})
