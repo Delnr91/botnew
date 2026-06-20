@@ -99,6 +99,44 @@ async def _call_grok(client: AsyncOpenAI, prompt: str, system: str, max_tokens: 
 
 _LLM_CALLERS = {"groq": _call_groq, "gemini": _call_gemini, "grok": _call_grok}
 
+# ---------------------------------------------------------------------------
+# ORÁCULO DE PÁNICO GLOBAL — Detección de Crisis Planetarias (nivel módulo)
+# Reutilizable por el manager_agent (por-usuario) y por el NewsEngine (central).
+# Si el título contiene estas palabras, se ignoran los filtros del usuario y
+# la noticia se envía como ALERTA ESPECIAL a todos.
+# ---------------------------------------------------------------------------
+GLOBAL_CRISIS_KEYWORDS = [
+    # Desastres Naturales
+    'terremoto', 'earthquake', 'tsunami', 'erupción volcánica', 'volcanic',
+    'huracán categoría', 'hurricane', 'tornado', 'inundación masiva', 'flood',
+    'incendio forestal', 'wildfire', 'sequía extrema', 'avalancha',
+    # Guerra y Conflicto
+    'guerra mundial', 'world war', 'invasión', 'invasion', 'nuclear',
+    'misil balístico', 'ballistic missile', 'bomba atómica', 'atomic',
+    'ataque aéreo masivo', 'genocidio', 'genocide', 'golpe de estado', 'coup',
+    'ley marcial', 'martial law',
+    # Terrorismo
+    'atentado terrorista', 'terrorist attack', 'ataque terrorista',
+    'bomba', 'explosión masiva', 'mass shooting', 'tiroteo masivo',
+    # Colapso Económico
+    'colapso', 'collapse', 'crash bursátil', 'stock crash', 'default soberano',
+    'hiperinflación', 'bank run', 'corrida bancaria', 'quiebra sistémica',
+    # Pandemia y Bioseguridad
+    'pandemia', 'pandemic', 'cuarentena global', 'lockdown', 'virus letal',
+    'emergencia sanitaria', 'bioterrorismo',
+    # Ciberseguridad Global
+    'hacker global', 'ciberataque masivo', 'cyberattack', 'apagón global',
+    'blackout', 'internet caído',
+    # Extraterrestres / Impacto Cósmico
+    'alien', 'extraterrestre', 'asteroide', 'asteroid', 'impacto cósmico',
+    'meteorito'
+]
+
+def detect_global_alert(title: str) -> bool:
+    """True si el título dispara el Oráculo de Pánico Global."""
+    t = (title or "").lower()
+    return any(word in t for word in GLOBAL_CRISIS_KEYWORDS)
+
 async def call_llm(prompt: str, system: str, clients: dict, preferred: str = "groq", max_tokens: int = 300) -> str:
     orden = [preferred] + [p for p in FALLBACK_ORDER if p != preferred]
     for provider in orden:
@@ -168,39 +206,8 @@ async def manager_agent(news_items: list, karma_context: str, profile: dict, cli
     for item in news_items:
         cat = item.get("category", "General")
         title = item.get("title", "").lower()
-        # ---------------------------------------------------------------------------
-        # ORÁCULO DE PÁNICO GLOBAL — Detección de Crisis Planetarias
-        # Si la noticia contiene estas palabras, IGNORA todos los filtros del usuario
-        # y la envía como ALERTA ESPECIAL a VIP y Premium por igual.
-        # ---------------------------------------------------------------------------
-        GLOBAL_CRISIS_KEYWORDS = [
-            # Desastres Naturales
-            'terremoto', 'earthquake', 'tsunami', 'erupción volcánica', 'volcanic',
-            'huracán categoría', 'hurricane', 'tornado', 'inundación masiva', 'flood',
-            'incendio forestal', 'wildfire', 'sequía extrema', 'avalancha',
-            # Guerra y Conflicto
-            'guerra mundial', 'world war', 'invasión', 'invasion', 'nuclear',
-            'misil balístico', 'ballistic missile', 'bomba atómica', 'atomic',
-            'ataque aéreo masivo', 'genocidio', 'genocide', 'golpe de estado', 'coup',
-            'ley marcial', 'martial law',
-            # Terrorismo
-            'atentado terrorista', 'terrorist attack', 'ataque terrorista',
-            'bomba', 'explosión masiva', 'mass shooting', 'tiroteo masivo',
-            # Colapso Económico
-            'colapso', 'collapse', 'crash bursátil', 'stock crash', 'default soberano',
-            'hiperinflación', 'bank run', 'corrida bancaria', 'quiebra sistémica',
-            # Pandemia y Bioseguridad
-            'pandemia', 'pandemic', 'cuarentena global', 'lockdown', 'virus letal',
-            'emergencia sanitaria', 'bioterrorismo',
-            # Ciberseguridad Global
-            'hacker global', 'ciberataque masivo', 'cyberattack', 'apagón global',
-            'blackout', 'internet caído',
-            # Extraterrestres / Impacto Cósmico
-            'alien', 'extraterrestre', 'asteroide', 'asteroid', 'impacto cósmico',
-            'meteorito'
-        ]
-        
-        is_global_alert = any(word in title for word in GLOBAL_CRISIS_KEYWORDS)
+        # Oráculo de Pánico Global (detector central reutilizable)
+        is_global_alert = detect_global_alert(title)
         
         # Marcar la noticia como alerta global para formato especial
         if is_global_alert:

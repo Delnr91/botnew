@@ -20,6 +20,7 @@ load_dotenv()
 from src.core.database import init_db, is_news_sent, mark_news_as_sent, cleanup_old_records
 from src.core.memory import init_memory_db, get_karma_lessons, save_karma, get_or_create_user_profile, update_user_location, get_troll_strikes, add_troll_strike
 from src.agents.engine import init_llm_clients, manager_agent, transcribe_audio, conversational_agent
+from src.agents.news_engine import refresh_news_cache, select_for_user
 from src.services.oracles import get_weather_and_aqi, get_btc_oracle
 from src.services.rss_fetcher import fetch_latest_news
 from src.agents.marketing import generate_marketing_campaign
@@ -45,33 +46,25 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
     profile['is_vip'] = vip_status['is_vip']
     is_vip = profile['is_vip']
     
-    news_items = await fetch_latest_news(limit_per_feed=3, is_vip=is_vip)
-    if not news_items:
+    # NewsEngine central: procesa el mundo 1 sola vez (caché). Aquí solo se LEE
+    # del caché y se filtra por el usuario —cero llamadas LLM por usuario—.
+    karma_context = get_karma_lessons(limit=5)
+    items = await refresh_news_cache(llm_clients, karma_context=karma_context)
+    if not items:
         if not silent_if_empty:
             await bot.send_message(chat_id, "📡 Radar despejado. No hay noticias nuevas en el mercado en este momento.")
         return
-        
-    if ignore_sent_filter:
-        nuevas_noticias = news_items[:limit]
-    else:
-        nuevas_noticias = [item for item in news_items if not is_news_sent(item['id'], user_id)][:limit]
-        
-    if not nuevas_noticias:
-        if not silent_if_empty:
-            await bot.send_message(chat_id, "📡 Ya estás al día. Has leído todas las noticias de alto impacto por ahora.")
-        return
 
-    karma_context = get_karma_lessons(limit=5)
-    resultados = await manager_agent(
-        news_items=nuevas_noticias,
-        karma_context=karma_context,
-        profile=profile,
-        clients=llm_clients
-    )
-    
+    # Margen amplio antes de aplicar el filtro de "ya enviadas"
+    candidatos = select_for_user(items, profile, limit=limit * 3)
+    if ignore_sent_filter:
+        resultados = candidatos[:limit]
+    else:
+        resultados = [it for it in candidatos if not is_news_sent(it['news_id'], user_id)][:limit]
+
     if not resultados:
         if not silent_if_empty:
-            await bot.send_message(chat_id, "📡 Radar procesado, pero ninguna noticia superó el filtro de relevancia de la IA. Estás al día.")
+            await bot.send_message(chat_id, "📡 Ya estás al día. Has leído todas las noticias de alto impacto por ahora.")
         return
         
     enviadas = 0
@@ -126,23 +119,29 @@ from src.core.memory import get_all_users
 
 async def scheduled_job():
     """Motor 24/7 para VIPs: Escanea el radar constantemente y envía PUSH en tiempo real."""
+    # Procesamos el mundo UNA vez por ciclo; el fan-out a usuarios reusa el caché.
+    await refresh_news_cache(llm_clients, karma_context=get_karma_lessons(limit=5), force=True)
+
     users = get_all_users()
     vip_users = [u['user_id'] for u in users if check_vip_status(u['user_id'])['is_vip']]
-    
+
     for user_id in vip_users:
         # PUSH en tiempo real para VIPs (Límite 3 para no spamear demasiado en un solo ciclo)
         await process_and_send_news(user_id, limit=3, silent_if_empty=True)
 
 async def scheduled_morning():
     """Motor Diario para Gratis: Envía el resumen general a todos."""
+    # Refrescamos el caché una vez antes de repartir el resumen matutino.
+    await refresh_news_cache(llm_clients, karma_context=get_karma_lessons(limit=5), force=True)
+
     users = get_all_users()
     free_users = [u['user_id'] for u in users if not check_vip_status(u['user_id'])['is_vip']]
-    
+
     for user_id in free_users:
         try:
             # Enviamos el mensaje matutino
             profile = get_or_create_user_profile(user_id)
-            clima = await get_weather_and_aqi(profile['location'] or "Bogota")
+            clima = await get_weather_and_aqi(profile.get('city') or "Bogota")
             reporte = f"☀️ <b>Buenos días. Aquí tu reporte diario de Atlos.</b>\n\n"
             if clima['status'] == 'ok':
                 reporte += f"☁️ <b>Clima ({clima['location']}):</b> {clima['temp']}C\n\n"
@@ -163,13 +162,22 @@ async def scheduled_morning():
             pass
 
 def get_main_keyboard(is_vip: bool = False):
-    botones = [
-        [KeyboardButton(text="📊 Mi Reporte"), KeyboardButton(text="📰 Pulso del Mercado")],
-        [KeyboardButton(text="💎 Premium VIP"), KeyboardButton(text="❓ Ayuda")]
-    ]
+    # UX button-first: todo accesible con botones grandes y claros (inclusivo,
+    # sin necesidad de saber comandos). Los slash siguen funcionando en paralelo.
     if is_vip:
-        botones.append([KeyboardButton(text="⚙️ Panel de Control VIP")])
-        
+        botones = [
+            [KeyboardButton(text="🔔 Mis Noticias"), KeyboardButton(text="📊 Mi Reporte")],
+            [KeyboardButton(text="🎙️ Voz IA"), KeyboardButton(text="⚙️ Mis Categorías")],
+            [KeyboardButton(text="📍 Mi Ciudad"), KeyboardButton(text="👑 Mi VIP")],
+            [KeyboardButton(text="❓ Ayuda")],
+        ]
+    else:
+        botones = [
+            [KeyboardButton(text="📰 Noticias"), KeyboardButton(text="📊 Mi Reporte")],
+            [KeyboardButton(text="📍 Mi Ciudad"), KeyboardButton(text="💎 Hazte VIP")],
+            [KeyboardButton(text="❓ Ayuda")],
+        ]
+
     keyboard = ReplyKeyboardMarkup(
         keyboard=botones,
         resize_keyboard=True,
@@ -338,7 +346,71 @@ async def cmd_ciudad(message: types.Message):
         
     nueva_ciudad = partes[1].strip()
     update_user_location(user_id, nueva_ciudad)
-    await message.answer(f"✅ ¡Listo! Tu radar climático ha sido configurado en <b>{nueva_ciudad}</b>. Toca '☀️ Buenos Días' para probarlo.")
+    await message.answer(f"✅ ¡Listo! Tu radar climático ha sido configurado en <b>{nueva_ciudad}</b>. Toca '📊 Mi Reporte' para probarlo.")
+
+# --- NOTICIAS POR BOTÓN (VIP = solo sus categorías; con aviso si no hay nuevas) ---
+@dp.message(F.text == "🔔 Mis Noticias")
+@dp.message(F.text == "📰 Noticias")
+@dp.message(Command('noticias'))
+async def cmd_news(message: types.Message):
+    await message.answer("🛰️ Escaneando tus fuentes en tiempo real...")
+    try:
+        # silent_if_empty=False → si no hay noticias nuevas, el bot lo dice.
+        # Para VIP, select_for_user ya filtra solo sus categorías activas.
+        await process_and_send_news(str(message.chat.id), limit=5, silent_if_empty=False)
+    except Exception as e:
+        import logging, traceback
+        logging.error(f"Error en Mis Noticias: {e}\n{traceback.format_exc()}")
+        await message.answer("📡 Las fuentes están saturadas un momento. Intenta de nuevo en unos minutos.")
+
+# --- VOZ IA: enseñar al usuario a hablarle (frases cortas de ejemplo) ---
+@dp.message(F.text == "🎙️ Voz IA")
+@dp.message(Command('voz'))
+async def cmd_voz(message: types.Message):
+    user_id = str(message.from_user.id)
+    vip = check_vip_status(user_id)
+
+    if not vip.get('is_vip'):
+        await message.answer(
+            "🎙️ <b>Voz IA</b> es una función exclusiva VIP.\n\n"
+            "Con ella solo mantienes presionado el micrófono de Telegram y me hablas. "
+            "Toca '💎 Hazte VIP' para desbloquearla."
+        )
+        return
+
+    await message.answer(
+        "🎙️ <b>Háblame con frases cortas</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Mantén presionado el 🎤 micrófono de Telegram y di algo como:\n\n"
+        "🌤️ <i>«¿Qué clima hace hoy en Antofagasta?»</i>\n"
+        "💰 <i>«¿Qué hay bueno hoy para invertir?»</i>\n"
+        "📈 <i>«¿Cuánto vale el Bitcoin?»</i>\n"
+        "🌍 <i>«¿Qué está pasando en el mundo?»</i>\n"
+        "🩺 <i>«Dame un consejo de salud para hoy»</i>\n\n"
+        "<i>Tip: mientras más corta y directa la frase, mejor te entiendo.</i>"
+    )
+
+# --- MI CIUDAD POR BOTÓN (sin necesidad de comando) ---
+class CityState(StatesGroup):
+    waiting = State()
+
+@dp.message(F.text == "📍 Mi Ciudad")
+async def ask_city_button(message: types.Message, state: FSMContext):
+    await state.set_state(CityState.waiting)
+    await message.answer(
+        "📍 Escribe el nombre de tu ciudad para calibrar tu clima.\n"
+        "<i>Ejemplo: Antofagasta, Santiago, Bogotá, Madrid.</i>"
+    )
+
+@dp.message(CityState.waiting)
+async def set_city_button(message: types.Message, state: FSMContext):
+    nueva_ciudad = (message.text or "").strip()
+    await state.clear()
+    if not nueva_ciudad:
+        await message.answer("No entendí la ciudad. Intenta de nuevo desde '📍 Mi Ciudad'.")
+        return
+    update_user_location(str(message.from_user.id), nueva_ciudad)
+    await message.answer(f"✅ Ciudad actualizada a <b>{nueva_ciudad}</b>. Toca '📊 Mi Reporte' para probarlo.")
 
 # --- PANEL VIP ---
 from src.core.memory import get_user_preferences, update_user_preferences
@@ -362,6 +434,7 @@ def get_panel_keyboard(prefs: dict):
     inline_kb.append([InlineKeyboardButton(text="✅ Guardar y Cerrar Panel", callback_data="close_panel")])
     return InlineKeyboardMarkup(inline_keyboard=inline_kb)
 
+@dp.message(F.text == "⚙️ Mis Categorías")
 @dp.message(F.text.contains("Panel de Control VIP"))
 @dp.message(Command('panel'))
 async def cmd_panel(message: types.Message):
@@ -412,6 +485,8 @@ async def process_toggle(callback: CallbackQuery):
 
 
 
+@dp.message(F.text == "👑 Mi VIP")
+@dp.message(F.text == "💎 Hazte VIP")
 @dp.message(F.text.contains("Premium VIP"))
 @dp.message(Command('premium'))
 async def cmd_premium(message: types.Message):
@@ -622,10 +697,12 @@ async def handle_voice(message: types.Message):
         
     await message.reply(f"\U0001f5e3\ufe0f <b>Transcripción:</b> {texto_transcrito}\n\n<i>Analizando...</i>")
     
-    # Preparar contexto si preguntan por clima o tiempo
+    # Preparar contexto en tiempo real (enrutador de intención: clima / finanzas).
+    # Se inyectan datos reales de APIs ANTES del LLM para respuestas certeras.
     context_data = ""
     texto_lower = texto_transcrito.lower()
-    if "clima" in texto_lower or "tiempo" in texto_lower or "temperatura" in texto_lower:
+
+    if any(k in texto_lower for k in ("clima", "tiempo", "temperatura", "calor", "frío", "frio", "lluvia")):
         profile = get_or_create_user_profile(user_id)
         ciudad = profile.get('city') or "Bogota"
         # Extract city from text if specified, very basic heuristic
@@ -634,11 +711,20 @@ async def handle_voice(message: types.Message):
             idx = words.index("en")
             if idx + 1 < len(words):
                 ciudad = words[idx + 1].capitalize()
-        
+
         clima = await get_weather_and_aqi(ciudad)
         if clima['status'] == 'ok':
-            context_data = f"Datos del Clima actual en {clima['location']}: {clima['temp']}C, {clima['description']}."
-            
+            context_data += f" [CLIMA] Actual en {clima['location']}: {clima['temp']}C, {clima['description']}, calidad del aire {clima.get('aqi','')}."
+
+    if any(k in texto_lower for k in ("invertir", "inversión", "inversion", "bitcoin", "btc", "cripto", "crypto", "mercado", "ethereum", "solana", "bolsa")):
+        btc = await get_btc_oracle()
+        if btc.get('status') == 'ok':
+            context_data += (
+                f" [MERCADO] Bitcoin ${btc['price']:,.2f} ({btc.get('change', 0)}%), "
+                f"Ethereum ${btc.get('eth_price', 0):,.2f}, Solana ${btc.get('sol_price', 0):,.2f}, "
+                f"sentimiento macro: {btc.get('sentiment', 'N/D')}."
+            )
+
     # Consultar al agente
     res = await conversational_agent(texto_transcrito, check_vip_status(user_id), llm_clients, context_data)
     
@@ -719,21 +805,18 @@ async def cmd_ayuda(message: types.Message):
     
     ayuda_text = (
         "❓ <b>Centro de Ayuda — Atlos</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Todo se maneja con los botones de abajo 👇 (no necesitas escribir comandos).</i>\n\n"
+        "<b>📰 Noticias</b>\n"
+        "Te traigo las noticias nuevas de mayor impacto. Si ya las leíste todas, te aviso.\n\n"
         "<b>📊 Mi Reporte</b>\n"
-        "Tu briefing personalizado: clima, calidad del aire, precio de Bitcoin y las noticias más relevantes del día.\n\n"
-        "<b>📰 Pulso del Mercado</b>\n"
-        "Escanea en tiempo real las fuentes globales y te entrega las noticias de mayor impacto analizadas por nuestra IA.\n\n"
-        "<b>💎 Premium VIP</b>\n"
-        "Desbloquea el acceso completo: comandos de voz, oráculo de ETH y SOL, panel de noticias personalizado y más.\n\n"
-        "<b>🎙️ Notas de Voz</b> (VIP)\n"
-        "Mantén presionado el micrófono y pregúntame lo que quieras: clima, mercados, geopolítica. La IA te responde al instante.\n\n"
-        "<b>Comandos útiles:</b>\n"
-        "/start — Reiniciar el bot\n"
-        "/ciudad Santiago — Cambiar tu ciudad\n"
-        "/reporte — Tu briefing diario\n"
-        "/panel — Panel de noticias (VIP)\n"
-        "/ayuda — Este menú\n"
+        "Tu briefing personalizado: clima, calidad del aire, Bitcoin y tus noticias del día.\n\n"
+        "<b>📍 Mi Ciudad</b>\n"
+        "Toca el botón y escribe tu ciudad para calibrar tu clima.\n\n"
+        "<b>💎 Hazte VIP</b>\n"
+        "Desbloquea: 🎙️ Voz IA, oráculo de ETH y SOL, '⚙️ Mis Categorías' personalizadas y alertas 24/7.\n\n"
+        "<b>🎙️ Voz IA</b> (VIP)\n"
+        "Mantén presionado el micrófono y háblame con frases cortas: clima, qué invertir, mercados, salud.\n"
     )
     
     if vip.get('is_vip'):
