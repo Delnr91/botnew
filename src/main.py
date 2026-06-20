@@ -41,6 +41,57 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=Pars
 dp = Dispatcher()
 llm_clients = {}
 
+def _build_karma_kb(news_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="\U0001f44d Me sirvio", callback_data=f"karma_up_{news_id}"),
+        InlineKeyboardButton(text="\U0001f44e Basura", callback_data=f"karma_down_{news_id}")
+    ]])
+
+async def _send_news_item(chat_id: str, res: dict, user_id: str) -> bool:
+    """Envía UNA noticia (con formato de alerta + portada si aplica) y la marca como enviada.
+    Reutilizable por el fan-out normal y por el broadcast de crisis global."""
+    karma_kb = _build_karma_kb(res['news_id'])
+
+    if res.get('is_global_alert'):
+        message_text = (
+            f"🚨🚨🚨 <b>ALERTA GLOBAL — ORÁCULO DE PÁNICO</b> 🚨🚨🚨\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>⚠️ EVENTO CRÍTICO DETECTADO</b>\n"
+            f"<i>Categoría: {res['category']}</i>\n\n"
+            f"{res['editorial']}\n\n"
+            f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Esta alerta se envió a TODOS los usuarios por protocolo de crisis.</i>"
+        )
+    else:
+        message_text = (
+            f"\U0001f3af <b>Atlos Radar</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Categoria: {res['category']}</i>\n\n"
+            f"{res['editorial']}\n\n"
+            f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Reacciona con \U0001f44d o \U0001f44e para ensenar a la IA.</i>"
+        )
+
+    try:
+        if res.get('is_global_alert') and os.getenv("ENABLE_ALERT_IMAGES", "1") == "1":
+            try:
+                prompt_img = quote(f"dramatic cinematic breaking news cover about {res['category']}, dark dramatic lighting, photorealistic")
+                img_url = f"https://image.pollinations.ai/prompt/{prompt_img}?width=1024&height=576&nologo=true"
+                await bot.send_photo(chat_id=chat_id, photo=img_url)
+            except Exception:
+                pass
+
+        await bot.send_message(
+            chat_id=chat_id, text=message_text, reply_markup=karma_kb,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        mark_news_as_sent(res['news_id'], res['title'], res['category'], user_id=user_id)
+        return True
+    except Exception:
+        return False
+
 async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: bool = False, ignore_sent_filter: bool = False):
     user_id = str(chat_id)
     profile = get_or_create_user_profile(user_id)
@@ -72,66 +123,33 @@ async def process_and_send_news(chat_id: str, limit: int = 5, silent_if_empty: b
     enviadas = 0
     await bot.send_message(chat_id, "📰 <b>Tus Noticias de Alto Impacto:</b>")
     for res in resultados:
-        karma_kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="\U0001f44d Me sirvio", callback_data=f"karma_up_{res['news_id']}"),
-                    InlineKeyboardButton(text="\U0001f44e Basura", callback_data=f"karma_down_{res['news_id']}")
-                ]
-            ]
-        )
-
-        # Formato especial para Alertas de Crisis Global
-        if res.get('is_global_alert'):
-            message_text = (
-                f"🚨🚨🚨 <b>ALERTA GLOBAL — ORÁCULO DE PÁNICO</b> 🚨🚨🚨\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<b>⚠️ EVENTO CRÍTICO DETECTADO</b>\n"
-                f"<i>Categoría: {res['category']}</i>\n\n"
-                f"{res['editorial']}\n\n"
-                f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<i>Esta alerta se envió a TODOS los usuarios por protocolo de crisis.</i>"
-            )
-        else:
-            message_text = (
-                f"\U0001f3af <b>Atlos Radar</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<i>Categoria: {res['category']}</i>\n\n"
-                f"{res['editorial']}\n\n"
-                f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<i>Reacciona con \U0001f44d o \U0001f44e para ensenar a la IA.</i>"
-            )
-        
-        try:
-            # Portada generada (gratis, Pollinations) solo para alertas globales: más impacto visual.
-            if res.get('is_global_alert') and os.getenv("ENABLE_ALERT_IMAGES", "1") == "1":
-                try:
-                    prompt_img = quote(f"dramatic cinematic breaking news cover about {res['category']}, dark dramatic lighting, photorealistic")
-                    img_url = f"https://image.pollinations.ai/prompt/{prompt_img}?width=1024&height=576&nologo=true"
-                    await bot.send_photo(chat_id=chat_id, photo=img_url)
-                except Exception:
-                    pass
-
-            await bot.send_message(
-                chat_id=chat_id,
-                text=message_text,
-                reply_markup=karma_kb,
-                link_preview_options=LinkPreviewOptions(is_disabled=True)
-            )
-            mark_news_as_sent(res['news_id'], res['title'], res['category'], user_id=user_id)
+        if await _send_news_item(chat_id, res, user_id):
             enviadas += 1
             await asyncio.sleep(2)
-        except Exception as e:
-            pass
 
 from src.core.memory import get_all_users
+from src.agents.news_engine import get_cached_items
+
+async def broadcast_global_alerts():
+    """Envía las Alertas de Pánico Global a TODOS los usuarios (free + VIP) en tiempo real.
+    Dedup por usuario vía is_news_sent: cada crisis llega una sola vez a cada quien."""
+    alerts = [it for it in get_cached_items() if it.get('is_global_alert')]
+    if not alerts:
+        return
+    for u in get_all_users():
+        uid = str(u['user_id'])
+        for a in alerts:
+            if not is_news_sent(a['news_id'], uid):
+                await _send_news_item(uid, a, uid)
+                await asyncio.sleep(0.3)
 
 async def scheduled_job():
     """Motor 24/7 para VIPs: Escanea el radar constantemente y envía PUSH en tiempo real."""
     # Procesamos el mundo UNA vez por ciclo; el fan-out a usuarios reusa el caché.
     await refresh_news_cache(llm_clients, karma_context=get_karma_lessons(limit=5), force=True)
+
+    # Crisis globales → a TODOS (free + VIP) en tiempo real, antes del push normal.
+    await broadcast_global_alerts()
 
     users = get_all_users()
     vip_users = [u['user_id'] for u in users if check_vip_status(u['user_id'])['is_vip']]
@@ -139,6 +157,21 @@ async def scheduled_job():
     for user_id in vip_users:
         # PUSH en tiempo real para VIPs (Límite 3 para no spamear demasiado en un solo ciclo)
         await process_and_send_news(user_id, limit=3, silent_if_empty=True)
+
+async def scheduled_free_pulse():
+    """Pulso ligero para usuarios FREE cada FREE_PULSE_HOURS horas: engagement sin spam.
+    Mantiene vivo al usuario gratis (varias veces al día) sin canibalizar el valor VIP."""
+    await refresh_news_cache(llm_clients, karma_context=get_karma_lessons(limit=5), force=True)
+    await broadcast_global_alerts()
+
+    users = get_all_users()
+    free_users = [u['user_id'] for u in users if not check_vip_status(u['user_id'])['is_vip']]
+    for user_id in free_users:
+        try:
+            await process_and_send_news(user_id, limit=2, silent_if_empty=True)
+            await asyncio.sleep(1)
+        except Exception:
+            pass
 
 async def scheduled_morning():
     """Motor Diario para Gratis: Envía el resumen general a todos."""
@@ -871,11 +904,15 @@ async def main():
     # Restaura el caché de noticias desde Redis (si está configurado) tras un reinicio.
     await load_persisted_cache()
 
+    free_pulse_hours = int(os.getenv("FREE_PULSE_HOURS", 8))
+
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(scheduled_job, 'interval', minutes=FETCH_INTERVAL_MINUTES) # PUSH VIP 24/7
+    scheduler.add_job(scheduled_job, 'interval', minutes=FETCH_INTERVAL_MINUTES) # PUSH VIP 24/7 + crisis a todos
     scheduler.add_job(scheduled_morning, 'cron', hour=8, minute=0) # Resumen Diario Free a las 8:00 AM
+    scheduler.add_job(scheduled_free_pulse, 'interval', hours=free_pulse_hours) # Pulso Free cada N horas
     scheduler.add_job(cleanup_old_records, 'interval', days=1)
     scheduler.start()
+    logging.info(f"⏰ Scheduler: VIP cada {FETCH_INTERVAL_MINUTES}min · Free cada {free_pulse_hours}h · Matutino 8:00")
     
     logging.info("\U0001f680 Iniciando Atlos — Enjambre Multi-Agente en Telegram...")
     await dp.start_polling(bot)

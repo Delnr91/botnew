@@ -172,9 +172,10 @@ GLOBAL_CRISIS_KEYWORDS = [
     # Pandemia y Bioseguridad
     'pandemia', 'pandemic', 'cuarentena global', 'lockdown', 'virus letal',
     'emergencia sanitaria', 'bioterrorismo',
-    # Ciberseguridad Global
+    # Ciberseguridad Global / IA fuera de control
     'hacker global', 'ciberataque masivo', 'cyberattack', 'apagón global',
-    'blackout', 'internet caído',
+    'blackout', 'internet caído', 'colapso de internet',
+    'ia fuera de control', 'rogue ai', 'superinteligencia', 'agi descontrolada',
     # Extraterrestres / Impacto Cósmico
     'alien', 'extraterrestre', 'asteroide', 'asteroid', 'impacto cósmico',
     'meteorito'
