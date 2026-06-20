@@ -247,31 +247,43 @@ async def cmd_morning(message: types.Message):
     user_id = str(message.from_user.id)
     username = message.from_user.first_name or "Usuario"
     profile = get_or_create_user_profile(user_id, username)
-    is_vip = profile.get('is_vip', 0) == 1
+    vip_status = check_vip_status(user_id)
+    is_vip = vip_status.get('is_vip', False)
     
     await message.answer("Atlos esta preparando tu rutina matutina. Analizando clima, mercados y oraculos globales... 🌍")
     
-    user_location = profile['location']
-    clima = await get_weather_and_aqi(user_location or "Bogota")
-    btc = await get_btc_oracle()
-    
-    reporte = f"🌅 <b>Buenos días, {username}</b>\n\n"
-    if clima['status'] == 'ok':
-        reporte += f"☁️ <b>Clima ({clima['location']}):</b> {clima['temp']}C, {clima['description'].capitalize()}\n"
-        reporte += f"🌬️ <b>Calidad del Aire:</b> {clima['aqi']}\n"
-        if not user_location:
-            reporte += "<i>(📍 Escribe /ciudad TuCiudad para personalizar el clima)</i>\n"
-        reporte += "\n"
-    if btc['status'] == 'ok':
-        reporte += f"💰 <b>Bitcoin:</b> ${btc['price']:,.2f} ({btc['change']}%)\n"
-        if is_vip:
-            reporte += f"💎 <b>Ethereum:</b> ${btc.get('eth_price', 0):,.2f}\n"
-            reporte += f"🚀 <b>Solana:</b> ${btc.get('sol_price', 0):,.2f}\n"
-            reporte += f"🧠 <b>Sentimiento Macro:</b> {btc.get('sentiment', '')}\n"
-        reporte += "\n"
+    try:
+        user_location = profile.get('city') or profile.get('location')
+        clima = await get_weather_and_aqi(user_location or "Bogota")
+        btc = await get_btc_oracle()
         
-    await message.answer(reporte)
-    await process_and_send_news(str(message.chat.id), limit=3)
+        reporte = f"🌅 <b>Buenos días, {username}</b>\n\n"
+        if clima['status'] == 'ok':
+            reporte += f"☁️ <b>Clima ({clima['location']}):</b> {clima['temp']}°C, {clima['description'].capitalize()}\n"
+            reporte += f"🌬️ <b>Calidad del Aire:</b> {clima['aqi']}\n"
+            if not user_location:
+                reporte += "<i>(📍 Escribe /ciudad TuCiudad para personalizar el clima)</i>\n"
+            reporte += "\n"
+        if btc.get('status') == 'ok':
+            reporte += f"💰 <b>Bitcoin:</b> ${btc['price']:,.2f} ({btc.get('change', 0)}%)\n"
+            if is_vip:
+                reporte += f"💎 <b>Ethereum:</b> ${btc.get('eth_price', 0):,.2f}\n"
+                reporte += f"🚀 <b>Solana:</b> ${btc.get('sol_price', 0):,.2f}\n"
+                reporte += f"🧠 <b>Sentimiento Macro:</b> {btc.get('sentiment', '')}\n"
+            reporte += "\n"
+            
+        await message.answer(reporte)
+    except Exception as e:
+        import logging
+        logging.error(f"Error en reporte matutino: {e}")
+        await message.answer("⚠️ Hubo un error generando parte del reporte. Consultando noticias...")
+    
+    try:
+        await process_and_send_news(str(message.chat.id), limit=3)
+    except Exception as e:
+        import logging
+        logging.error(f"Error en noticias matutinas: {e}")
+        await message.answer("📡 Las fuentes de noticias están temporalmente saturadas. Intenta con 'Pulso del Mercado' en unos minutos.")
     
     if not is_vip:
         # --- FOMO TEASER DIARIO ---

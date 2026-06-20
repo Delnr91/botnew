@@ -260,7 +260,7 @@ async def conversational_agent(transcription: str, profile: dict, clients: dict,
         sys_prompt += f"\n\n[CONTEXTO DEL USUARIO Y MERCADO EN TIEMPO REAL]: {context_data}"
         
     try:
-        res = await call_llm(transcription, sys_prompt, clients, "groq", max_tokens=250)
+        res = await call_llm(transcription, sys_prompt, clients, "groq", max_tokens=500)
         
         if "TROLL_DETECTED" in res:
             return {"response": "Soy Atlos, una IA de inteligencia corporativa. No estoy configurado para este tipo de interacciones. Quedas advertido.", "strike": True}
