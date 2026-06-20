@@ -565,6 +565,37 @@ async def process_karma_callback(callback: CallbackQuery):
     await callback.answer(respuesta_usuario)
     await callback.message.edit_reply_markup(reply_markup=None)
 
+@dp.message(Command("give_vip"))
+async def cmd_give_vip(message: types.Message):
+    user_id = str(message.from_user.id)
+    profile = get_or_create_user_profile(user_id)
+    
+    if not profile.get('is_vip'):
+        await message.answer("⚠️ Solo los administradores (VIP) pueden regalar membresías.")
+        return
+        
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("Uso: /give_vip <ID_DEL_USUARIO> <DIAS>\nEjemplo: /give_vip 123456789 30")
+        return
+        
+    target_id = parts[1]
+    
+    try:
+        days = int(parts[2])
+    except ValueError:
+        await message.answer("Error: Los días deben ser un número.")
+        return
+    
+    from src.services.payments import activate_vip
+    activate_vip(target_id, duration_days=days)
+    
+    await message.answer(f"👑 Privilegios concedidos. El usuario {target_id} es ahora VIP por {days} días.")
+    try:
+        await bot.send_message(target_id, f"🎉 ¡Felicidades! Has recibido una membresía VIP de cortesía por {days} días. Disfruta del acceso total a Comandos de Voz e Inteligencia Financiera.")
+    except Exception:
+        pass
+
 async def main():
     global llm_clients
     init_db()
