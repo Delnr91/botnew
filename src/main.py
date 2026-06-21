@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types, F
+from typing import Callable, Dict, Any, Awaitable
+from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -11,7 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     LinkPreviewOptions, ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
-    PreCheckoutQuery, LabeledPrice, FSInputFile
+    PreCheckoutQuery, LabeledPrice, FSInputFile, TelegramObject
 )
 from urllib.parse import quote
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -36,6 +38,57 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 FETCH_INTERVAL_MINUTES = int(os.getenv('FETCH_INTERVAL_MINUTES', 120))
+
+class RateLimitMiddleware(BaseMiddleware):
+    def __init__(self, limit: int = 5, period: int = 60):
+        self.limit = limit
+        self.period = period
+        self.users = {}
+        super().__init__()
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        user = None
+        if isinstance(event, types.Message):
+            user = event.from_user
+        elif isinstance(event, CallbackQuery):
+            user = event.from_user
+
+        if not user:
+            return await handler(event, data)
+
+        user_id = user.id
+        now = time.time()
+
+        if user_id not in self.users:
+            self.users[user_id] = []
+
+        # Limpiar marcas de tiempo antiguas
+        self.users[user_id] = [t for t in self.users[user_id] if now - t < self.period]
+
+        if len(self.users[user_id]) >= self.limit:
+            # Enviar advertencia solo la primera vez que se supera el límite
+            if len(self.users[user_id]) == self.limit:
+                if isinstance(event, types.Message):
+                    await event.reply(
+                        "⚠️ <b>Límite de velocidad excedido.</b>\n"
+                        "Has enviado demasiadas peticiones. Por favor, espera un minuto."
+                    )
+                elif isinstance(event, CallbackQuery):
+                    await event.answer(
+                        "⚠️ Demasiados clics. Por favor espera un momento.",
+                        show_alert=True
+                    )
+            # Agregar la marca de tiempo para extender la penalización si continúan spameando
+            self.users[user_id].append(now)
+            return
+
+        self.users[user_id].append(now)
+        return await handler(event, data)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -900,6 +953,10 @@ async def main():
     init_memory_db()
     init_payment_tables()
     llm_clients = init_llm_clients()
+
+    # Registrar el middleware de limitación de tasa (Rate Limiting)
+    dp.message.outer_middleware(RateLimitMiddleware(limit=5, period=60))
+    dp.callback_query.outer_middleware(RateLimitMiddleware(limit=10, period=60))
 
     # Restaura el caché de noticias desde Redis (si está configurado) tras un reinicio.
     await load_persisted_cache()
