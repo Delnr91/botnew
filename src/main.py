@@ -39,11 +39,31 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 FETCH_INTERVAL_MINUTES = int(os.getenv('FETCH_INTERVAL_MINUTES', 120))
 
+from src.core.throttle import SlidingWindow, Cooldown, DailyCounter
+
+# Estructuras anti-abuso compartidas (en memoria, protegen la capa gratis)
+_msg_window = SlidingWindow()      # ráfagas de mensajes/clics
+_msg_daily = DailyCounter()        # tope diario por usuario (anti-bot sostenido)
+_warn_cooldown = Cooldown()        # evita spamear el aviso de vuelta al usuario
+
+# Guardián de voz (operación más cara: Whisper + LLM + TTS)
+_voice_cooldown = Cooldown()
+_voice_daily = DailyCounter()
+VOICE_COOLDOWN_SECONDS = int(os.getenv("VOICE_COOLDOWN_SECONDS", 20))
+VOICE_DAILY_LIMIT = int(os.getenv("VOICE_DAILY_LIMIT", 40))
+
 class RateLimitMiddleware(BaseMiddleware):
-    def __init__(self, limit: int = 5, period: int = 60):
+    """Protege el servidor y las cuotas free:
+    - Ráfaga: `limit` eventos por `period` s (ventana deslizante).
+    - Diario: `daily_limit` eventos por día (0 = sin tope). Frena bots sostenidos.
+    - Poda periódica de la memoria. El aviso al usuario se manda 1 vez por minuto.
+    """
+
+    def __init__(self, limit: int = 5, period: int = 60, daily_limit: int = 0):
         self.limit = limit
         self.period = period
-        self.users = {}
+        self.daily_limit = daily_limit
+        self._last_prune = time.time()
         super().__init__()
 
     async def __call__(
@@ -53,41 +73,39 @@ class RateLimitMiddleware(BaseMiddleware):
         data: Dict[str, Any]
     ) -> Any:
         user = None
-        if isinstance(event, types.Message):
+        if isinstance(event, (types.Message, CallbackQuery)):
             user = event.from_user
-        elif isinstance(event, CallbackQuery):
-            user = event.from_user
-
         if not user:
             return await handler(event, data)
 
         user_id = user.id
-        now = time.time()
 
-        if user_id not in self.users:
-            self.users[user_id] = []
+        # Poda de memoria cada hora (evita crecimiento con muchos usuarios)
+        if time.time() - self._last_prune > 3600:
+            _msg_window.prune(self.period)
+            _warn_cooldown.prune()
+            _msg_daily.prune()
+            self._last_prune = time.time()
 
-        # Limpiar marcas de tiempo antiguas
-        self.users[user_id] = [t for t in self.users[user_id] if now - t < self.period]
-
-        if len(self.users[user_id]) >= self.limit:
-            # Enviar advertencia solo la primera vez que se supera el límite
-            if len(self.users[user_id]) == self.limit:
-                if isinstance(event, types.Message):
-                    await event.reply(
-                        "⚠️ <b>Límite de velocidad excedido.</b>\n"
-                        "Has enviado demasiadas peticiones. Por favor, espera un minuto."
-                    )
-                elif isinstance(event, CallbackQuery):
-                    await event.answer(
-                        "⚠️ Demasiados clics. Por favor espera un momento.",
-                        show_alert=True
-                    )
-            # Agregar la marca de tiempo para extender la penalización si continúan spameando
-            self.users[user_id].append(now)
+        # 1) Tope diario: corta abuso sostenido en silencio (no gasta recursos)
+        if not _msg_daily.allow(("msg", user_id), self.daily_limit):
+            allow_warn, _ = _warn_cooldown.check(("daily", user_id), 3600)
+            if allow_warn and isinstance(event, types.Message):
+                await event.reply("🛑 Alcanzaste el límite diario de uso. Vuelve mañana.")
             return
 
-        self.users[user_id].append(now)
+        # 2) Ráfaga: máximo `limit` por `period` s
+        if not _msg_window.allow(user_id, self.limit, self.period):
+            allow_warn, _ = _warn_cooldown.check(("burst", user_id), 60)
+            if allow_warn:
+                if isinstance(event, types.Message):
+                    await event.reply(
+                        "⚠️ <b>Demasiadas peticiones.</b>\nEspera un momento antes de continuar."
+                    )
+                elif isinstance(event, CallbackQuery):
+                    await event.answer("⚠️ Demasiados clics. Espera un momento.", show_alert=True)
+            return
+
         return await handler(event, data)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -779,7 +797,17 @@ async def handle_voice(message: types.Message):
             "Toca '\U0001f48e Premium VIP' para desbloquearla."
         )
         return
-        
+
+    # GUARDI\u00c1N DE VOZ: la voz es la operaci\u00f3n m\u00e1s cara (Whisper + LLM + TTS).
+    # Cooldown entre notas + tope diario, ANTES de descargar/transcribir nada.
+    ok, espera = _voice_cooldown.check(user_id, VOICE_COOLDOWN_SECONDS)
+    if not ok:
+        await message.reply(f"\ud83c\udf99\ufe0f Espera {espera}s entre notas de voz, por favor.")
+        return
+    if not _voice_daily.allow(user_id, VOICE_DAILY_LIMIT):
+        await message.reply("\ud83c\udf99\ufe0f Alcanzaste el l\u00edmite diario de notas de voz. Vuelve ma\u00f1ana.")
+        return
+
     await message.answer("\U0001f3a7 Escuchando...")
     
     file_id = message.voice.file_id
@@ -954,9 +982,12 @@ async def main():
     init_payment_tables()
     llm_clients = init_llm_clients()
 
-    # Registrar el middleware de limitación de tasa (Rate Limiting)
-    dp.message.outer_middleware(RateLimitMiddleware(limit=5, period=60))
-    dp.callback_query.outer_middleware(RateLimitMiddleware(limit=10, period=60))
+    # Registrar el middleware anti-abuso (ráfaga + tope diario) — protege la capa gratis.
+    msg_limit = int(os.getenv("RATE_LIMIT_MSGS", 5))
+    msg_period = int(os.getenv("RATE_LIMIT_PERIOD", 60))
+    daily_limit = int(os.getenv("DAILY_MSG_LIMIT", 300))  # 0 = sin tope diario
+    dp.message.outer_middleware(RateLimitMiddleware(limit=msg_limit, period=msg_period, daily_limit=daily_limit))
+    dp.callback_query.outer_middleware(RateLimitMiddleware(limit=msg_limit * 2, period=msg_period, daily_limit=daily_limit * 2))
 
     # Restaura el caché de noticias desde Redis (si está configurado) tras un reinicio.
     await load_persisted_cache()
