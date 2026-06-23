@@ -952,17 +952,26 @@ async def cmd_ayuda(message: types.Message):
     ayuda_text = (
         "❓ <b>Centro de Ayuda — Atlos</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Todo se maneja con los botones de abajo 👇 (no necesitas escribir comandos).</i>\n\n"
-        "<b>📰 Noticias</b>\n"
-        "Te traigo las noticias nuevas de mayor impacto. Si ya las leíste todas, te aviso.\n\n"
-        "<b>📊 Mi Reporte</b>\n"
-        "Tu briefing personalizado: clima, calidad del aire, Bitcoin y tus noticias del día.\n\n"
-        "<b>📍 Mi Ciudad</b>\n"
-        "Toca el botón y escribe tu ciudad para calibrar tu clima.\n\n"
-        "<b>💎 Hazte VIP</b>\n"
-        "Desbloquea: 🎙️ Voz IA, oráculo de ETH y SOL, '⚙️ Mis Categorías' personalizadas y alertas 24/7.\n\n"
-        "<b>🎙️ Voz IA</b> (VIP)\n"
-        "Mantén presionado el micrófono y háblame con frases cortas: clima, qué invertir, mercados, salud.\n"
+        "<i>Usa los botones del menú 👇 o escribe cualquier comando /</i>\n\n"
+        "━━ <b>COMANDOS PRINCIPALES</b> ━━\n"
+        "/start — 🚀 Reiniciar el bot y ver el menú\n"
+        "/reporte — 📊 Reporte diario: clima + cripto + noticias\n"
+        "/noticias — 📰 Últimas noticias de alto impacto\n"
+        "/ciudad Santiago — 📍 Cambiar tu ciudad para el clima\n\n"
+        "━━ <b>COMANDOS VIP</b> ━━\n"
+        "/voz — 🎙️ Cómo usar Voz IA (habla y Atlos responde)\n"
+        "/panel — ⚙️ Elegir tus categorías de noticias\n\n"
+        "━━ <b>OTROS</b> ━━\n"
+        "/premium — 💎 Ver planes y activar membresía VIP\n"
+        "/about — 🧠 Sobre la tecnología Atlos\n"
+        "/ayuda — ❓ Esta pantalla de ayuda\n\n"
+        "━━ <b>BOTONES DEL MENÚ</b> ━━\n"
+        "📰 <b>Noticias</b> — noticias nuevas de mayor impacto\n"
+        "📊 <b>Mi Reporte</b> — briefing clima + Bitcoin + noticias\n"
+        "📍 <b>Mi Ciudad</b> — calibrar clima de tu ciudad\n"
+        "🎙️ <b>Voz IA</b> — habla con Atlos (VIP)\n"
+        "⚙️ <b>Mis Categorías</b> — personalizar radar (VIP)\n"
+        "💎 <b>Hazte VIP</b> — desbloquear radar 24/7 + voz\n"
     )
     
     if vip.get('is_vip'):
@@ -974,6 +983,23 @@ async def cmd_ayuda(message: types.Message):
         ayuda_text += "\n<i>💡 Actualiza a VIP para desbloquear voz, panel y oráculo avanzado.</i>\n"
     
     await message.answer(ayuda_text)
+
+async def _register_commands():
+    """Registra los comandos slash en el menú de Telegram (el botón / de la app)."""
+    from aiogram.types import BotCommand
+    comandos = [
+        BotCommand(command="start",    description="🚀 Iniciar / reiniciar el bot"),
+        BotCommand(command="reporte",  description="📊 Tu reporte diario (clima + cripto + noticias)"),
+        BotCommand(command="noticias", description="📰 Últimas noticias de alto impacto"),
+        BotCommand(command="voz",      description="🎙️ Instrucciones para usar Voz IA (VIP)"),
+        BotCommand(command="panel",    description="⚙️ Panel de categorías personalizadas (VIP)"),
+        BotCommand(command="premium",  description="💎 Ver planes VIP y activar membresía"),
+        BotCommand(command="ciudad",   description="📍 Cambiar tu ciudad (ej: /ciudad Santiago)"),
+        BotCommand(command="ayuda",    description="❓ Centro de ayuda con todos los comandos"),
+        BotCommand(command="about",    description="🧠 Sobre la tecnología Atlos"),
+    ]
+    await bot.set_my_commands(comandos)
+    logging.info("✅ Menú de comandos registrado en Telegram.")
 
 async def main():
     global llm_clients
@@ -988,6 +1014,9 @@ async def main():
     daily_limit = int(os.getenv("DAILY_MSG_LIMIT", 300))  # 0 = sin tope diario
     dp.message.outer_middleware(RateLimitMiddleware(limit=msg_limit, period=msg_period, daily_limit=daily_limit))
     dp.callback_query.outer_middleware(RateLimitMiddleware(limit=msg_limit * 2, period=msg_period, daily_limit=daily_limit * 2))
+
+    # Registra el menú de comandos / en Telegram
+    await _register_commands()
 
     # Restaura el caché de noticias desde Redis (si está configurado) tras un reinicio.
     await load_persisted_cache()

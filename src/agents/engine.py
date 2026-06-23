@@ -154,31 +154,33 @@ def _is_rate_limit(err: Exception) -> bool:
 # la noticia se envía como ALERTA ESPECIAL a todos.
 # ---------------------------------------------------------------------------
 GLOBAL_CRISIS_KEYWORDS = [
-    # Desastres Naturales
-    'terremoto', 'earthquake', 'tsunami', 'erupción volcánica', 'volcanic',
-    'huracán categoría', 'hurricane', 'tornado', 'inundación masiva', 'flood',
-    'incendio forestal', 'wildfire', 'sequía extrema', 'avalancha',
+    # Desastres Naturales — frases específicas, no palabras sueltas
+    'gran terremoto', 'massive earthquake', 'terremoto magnitud', 'tsunami alert',
+    'alerta de tsunami', 'erupción volcánica', 'volcanic eruption',
+    'huracán categoría', 'category hurricane', 'tornado devastador',
+    'inundación masiva', 'massive flooding', 'incendio forestal masivo', 'wildfire emergency',
     # Guerra y Conflicto
-    'guerra mundial', 'world war', 'invasión', 'invasion', 'nuclear',
-    'misil balístico', 'ballistic missile', 'bomba atómica', 'atomic',
-    'ataque aéreo masivo', 'genocidio', 'genocide', 'golpe de estado', 'coup',
-    'ley marcial', 'martial law',
-    # Terrorismo
+    'guerra mundial', 'world war', 'tercera guerra', 'third world war',
+    'invasión militar', 'military invasion', 'ataque nuclear', 'nuclear attack',
+    'misil balístico', 'ballistic missile', 'bomba atómica', 'atomic bomb',
+    'ataque aéreo masivo', 'massive airstrike', 'genocidio', 'genocide',
+    'golpe de estado', 'coup d\'état', 'ley marcial', 'martial law',
+    # Terrorismo — frases completas
     'atentado terrorista', 'terrorist attack', 'ataque terrorista',
-    'bomba', 'explosión masiva', 'mass shooting', 'tiroteo masivo',
-    # Colapso Económico
-    'colapso', 'collapse', 'crash bursátil', 'stock crash', 'default soberano',
-    'hiperinflación', 'bank run', 'corrida bancaria', 'quiebra sistémica',
+    'explosión masiva', 'mass explosion', 'mass shooting', 'tiroteo masivo',
+    # Colapso Económico — frases específicas
+    'colapso financiero', 'financial collapse', 'crash bursátil', 'stock market crash',
+    'default soberano', 'sovereign default', 'hiperinflación', 'hyperinflation',
+    'corrida bancaria', 'bank run', 'quiebra sistémica',
     # Pandemia y Bioseguridad
-    'pandemia', 'pandemic', 'cuarentena global', 'lockdown', 'virus letal',
-    'emergencia sanitaria', 'bioterrorismo',
-    # Ciberseguridad Global / IA fuera de control
-    'hacker global', 'ciberataque masivo', 'cyberattack', 'apagón global',
-    'blackout', 'internet caído', 'colapso de internet',
-    'ia fuera de control', 'rogue ai', 'superinteligencia', 'agi descontrolada',
-    # Extraterrestres / Impacto Cósmico
-    'alien', 'extraterrestre', 'asteroide', 'asteroid', 'impacto cósmico',
-    'meteorito'
+    'pandemia global', 'global pandemic', 'nueva pandemia', 'cuarentena global',
+    'global lockdown', 'virus letal', 'emergencia sanitaria global', 'bioterrorismo',
+    # Ciberseguridad Global
+    'ciberataque masivo', 'massive cyberattack', 'apagón global', 'global blackout',
+    'internet caído globalmente', 'ia fuera de control', 'rogue ai', 'agi descontrolada',
+    # Impacto Cósmico — solo eventos reales confirmados
+    'impacto de asteroide', 'asteroid impact', 'impacto cósmico', 'meteorito impacta',
+    'contacto extraterrestre confirmado', 'confirmed alien contact',
 ]
 
 def detect_global_alert(title: str) -> bool:
@@ -239,10 +241,12 @@ async def health_coach_agent(clients: dict, profile: dict = None) -> str:
         if edad:
             contexto = f" El usuario tiene {edad} años."
     sys = ("Eres el Coach de Salud y Longevidad de Atlos. Da UN consejo de bienestar "
-           "para HOY: práctico, accionable y motivador. Máximo 2 frases cortas. Español neutro."
+           "para HOY: práctico, accionable y motivador. Máximo 2 frases cortas. Español neutro. "
+           "IMPORTANTE: Solo texto plano, sin asteriscos ni markdown."
            + contexto)
     try:
-        return await call_llm("Dame el consejo de salud de hoy.", sys, clients, "groq", 120)
+        result = await call_llm("Dame el consejo de salud de hoy.", sys, clients, "groq", 120)
+        return _clean_llm_output(result)
     except Exception:
         return ""
 
@@ -265,15 +269,38 @@ async def quant_agent(news_item: dict, clients: dict, is_vip: bool) -> dict:
 # 4. AGENTE EDITOR Y MANAGER (KARMALOPY)
 # ---------------------------------------------------------------------------
 
+def _clean_llm_output(text: str) -> str:
+    """Convierte markdown del LLM a texto limpio para Telegram HTML.
+    Elimina **, __, ##, *, ` y otros artefactos de formato Markdown."""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)   # **bold** → texto
+    text = re.sub(r'\*(.+?)\*', r'\1', text)         # *italic* → texto
+    text = re.sub(r'__(.+?)__', r'\1', text)         # __bold__ → texto
+    text = re.sub(r'_(.+?)_', r'\1', text)           # _italic_ → texto
+    text = re.sub(r'#{1,6}\s*', '', text)            # ## Título → Título
+    text = re.sub(r'`(.+?)`', r'\1', text)           # `code` → texto
+    text = re.sub(r'^\s*[-*•]\s+', '', text, flags=re.MULTILINE)  # bullets → sin bullet
+    text = re.sub(r'\n{3,}', '\n\n', text)           # 3+ saltos → 2
+    return text.strip()
+
+
 async def editor_agent(news_item: dict, analysis: str, karma_context: str, psychologist_tone: str, clients: dict) -> str:
-    sys = f"Eres Atlos, el boletín definitivo de inteligencia para caballeros modernos. Redactas con el estilo analítico, elegante e impecable de 'The New York Times'. REGLA DE PERSONALIDAD: {psychologist_tone}"
+    sys = (
+        f"Eres Atlos, el boletín definitivo de inteligencia para caballeros modernos. "
+        f"Redactas con el estilo analítico, elegante e impecable de 'The New York Times'. "
+        f"REGLA DE PERSONALIDAD: {psychologist_tone}\n"
+        f"REGLA DE FORMATO: Escribe SOLO texto plano. PROHIBIDO usar asteriscos (**), "
+        f"guiones bajos (__), almohadillas (#), asteriscos simples (*) ni ningún símbolo Markdown. "
+        f"Sin listas con guiones. Sin negritas ni cursivas. Solo párrafos de texto limpio."
+    )
     if karma_context:
         sys += f"\n\n[LECCIONES DE KARMA ANTERIORES - NO LO REPITAS, SOLO APRENDE]: {karma_context}"
-        
+
     prompt = f"Redacta esta noticia para mantener al lector entretenido e informado:\nTítulo: {news_item.get('title')}\nAnálisis interno: {analysis}\nEscribe la versión final directo al grano, sofisticada y útil (2 párrafos max)."
-    
+
     try:
-        return await call_llm(prompt, sys, clients, "gemini", 300)
+        result = await call_llm(prompt, sys, clients, "gemini", 300)
+        return _clean_llm_output(result)
     except:
         return news_item.get("title")
 
@@ -353,11 +380,11 @@ async def conversational_agent(transcription: str, profile: dict, clients: dict,
         
     try:
         res = await call_llm(transcription, sys_prompt, clients, "groq", max_tokens=500)
-        
+
         if "TROLL_DETECTED" in res:
             return {"response": "Soy Atlos, una IA de inteligencia corporativa. No estoy configurado para este tipo de interacciones. Quedas advertido.", "strike": True}
-            
-        return {"response": res, "strike": False}
+
+        return {"response": _clean_llm_output(res), "strike": False}
     except Exception as e:
         import logging
         logging.error(f"Error en Conversational Agent: {e}")
