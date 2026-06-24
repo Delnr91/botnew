@@ -131,9 +131,10 @@ def get_user_preferences(user_id: str) -> dict:
     profile = get_or_create_user_profile(user_id)
     prefs = profile.get('preferences', {})
     if isinstance(prefs, str):
-        try: return json.loads(prefs)
-        except: return {}
-    return prefs
+        try: prefs = json.loads(prefs)
+        except: prefs = {}
+    # Devolver solo preferencias de categorías (excluir claves internas como 'strikes')
+    return {k: v for k, v in prefs.items() if k not in ("strikes",)}
 
 def update_user_preferences(user_id: str, prefs_dict: dict):
     if not supabase: return

@@ -90,13 +90,25 @@ async def refresh_news_cache(clients: dict, karma_context: str = "", force: bool
         seen.add(key)
         unique.append(item)
 
+    # Balanceo por categoría: máx 3 ítems por categoría en el caché.
+    # Evita que categorías con muchos feeds (Geopolítica, Tech) dominen todo.
+    MAX_PER_CAT = 3
+    cat_count: dict = {}
     procesadas = []
     for item in unique:
         title = item.get("title", "")
+        cat = item.get("category", "General")
         alerta = detect_global_alert(title)
+
+        # Las alertas globales siempre pasan, sin contar para el límite por categoría
+        if not alerta:
+            if cat_count.get(cat, 0) >= MAX_PER_CAT:
+                continue
+            cat_count[cat] = cat_count.get(cat, 0) + 1
 
         analysis = await quant_agent(item, clients, is_vip=True)
         if not analysis["is_relevant"] and not alerta:
+            cat_count[cat] = cat_count.get(cat, 0) - 1  # no consumir el cupo si no es relevante
             continue
 
         # Karmalopy: reintento si la redacción sale demasiado corta
@@ -113,7 +125,7 @@ async def refresh_news_cache(clients: dict, karma_context: str = "", force: bool
             "title": title,
             "editorial": editorial,
             "link": item.get("link", ""),
-            "category": item.get("category", "General"),
+            "category": cat,
             "news_id": item.get("id", ""),
             "is_global_alert": alerta,
         })
@@ -142,6 +154,11 @@ def select_for_user(items: list, profile: dict, limit: int) -> list:
         prefs = prefs_raw
 
     is_vip = profile.get("is_vip", False)
+    uid = profile.get("user_id", "?")
+    # Excluir claves internas del sistema que no son categorías de noticias
+    cat_prefs = {k: v for k, v in prefs.items() if k not in ("strikes",)}
+    logging.info(f"select_for_user uid={uid} is_vip={is_vip} prefs={cat_prefs} items={len(items)}")
+
     out = []
     for it in items:
         if it.get("is_global_alert"):
@@ -149,8 +166,10 @@ def select_for_user(items: list, profile: dict, limit: int) -> list:
             continue
         cat = it.get("category", "General")
         # Blacklist: mostrar todo EXCEPTO lo que el usuario explícitamente apagó (False).
-        # Así el panel funciona como interruptor: apagar lo que NO quieres, no elegir lo que sí.
-        if is_vip and prefs.get(cat, True) is False:
+        if is_vip and cat_prefs.get(cat, True) is False:
+            logging.info(f"  SKIP cat={cat} (apagado por usuario)")
             continue
         out.append(it)
+
+    logging.info(f"select_for_user resultado: {len(out)} noticias para uid={uid}")
     return out[:limit]
