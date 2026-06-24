@@ -118,31 +118,36 @@ def _build_karma_kb(news_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="\U0001f44e Basura", callback_data=f"karma_down_{news_id}")
     ]])
 
+_CAT_EMOJI = {
+    "Deep Tech e IA": "🤖", "Geopolítica y Guerra": "🌍", "Criptomonedas": "₿",
+    "Mercados y Wall Street": "📈", "Deportes": "⚽", "Astronomía y Ciencia": "🔭",
+    "Entretenimiento y Cultura": "🎬", "Salud y Bienestar": "🩺",
+    "Viajes y Estilo de Vida": "✈️", "Videojuegos y E-Sports": "🎮",
+    "Clima y Sostenibilidad": "🌱", "Startups y Negocios": "🚀",
+    "Motor y Automovilismo": "🏎️", "General": "📰",
+}
+
 async def _send_news_item(chat_id: str, res: dict, user_id: str) -> bool:
-    """Envía UNA noticia (con formato de alerta + portada si aplica) y la marca como enviada.
-    Reutilizable por el fan-out normal y por el broadcast de crisis global."""
+    """Envía UNA noticia (con formato de alerta + portada si aplica) y la marca como enviada."""
     karma_kb = _build_karma_kb(res['news_id'])
+    cat = res['category']
+    emoji = _CAT_EMOJI.get(cat, "📰")
 
     if res.get('is_global_alert'):
         message_text = (
-            f"🚨🚨🚨 <b>ALERTA GLOBAL — ORÁCULO DE PÁNICO</b> 🚨🚨🚨\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<b>⚠️ EVENTO CRÍTICO DETECTADO</b>\n"
-            f"<i>Categoría: {res['category']}</i>\n\n"
+            f"🚨 <b>ALERTA GLOBAL — ORÁCULO DE PÁNICO</b> 🚨\n\n"
+            f"⚠️ <b>EVENTO CRÍTICO DETECTADO</b>\n"
+            f"{emoji} <i>{cat}</i>\n\n"
             f"{res['editorial']}\n\n"
-            f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Esta alerta se envió a TODOS los usuarios por protocolo de crisis.</i>"
+            f"🔗 <a href='{res['link']}'>Leer fuente original</a>\n\n"
+            f"<i>⚡ Alerta enviada a todos los usuarios por protocolo de crisis.</i>"
         )
     else:
         message_text = (
-            f"\U0001f3af <b>Atlos Radar</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Categoria: {res['category']}</i>\n\n"
+            f"{emoji} <b>{cat}</b>\n\n"
             f"{res['editorial']}\n\n"
-            f"Fuente — <a href='{res['link']}'>[Leer Original]</a>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Reacciona con \U0001f44d o \U0001f44e para ensenar a la IA.</i>"
+            f"🔗 <a href='{res['link']}'>Leer fuente original</a>\n"
+            f"<i>¿Te sirvió esta noticia?</i>"
         )
 
     try:
@@ -226,8 +231,8 @@ async def scheduled_job():
     vip_users = [u['user_id'] for u in users if check_vip_status(u['user_id'])['is_vip']]
 
     for user_id in vip_users:
-        # PUSH en tiempo real para VIPs (Límite 3 para no spamear demasiado en un solo ciclo)
-        await process_and_send_news(user_id, limit=3, silent_if_empty=True)
+        # Máx 2 noticias nuevas por ciclo VIP (cada 120 min = ~24 noticias/día máx)
+        await process_and_send_news(user_id, limit=2, silent_if_empty=True)
 
 async def scheduled_free_pulse():
     """Pulso ligero para usuarios FREE cada FREE_PULSE_HOURS horas: engagement sin spam.

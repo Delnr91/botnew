@@ -142,23 +142,15 @@ def select_for_user(items: list, profile: dict, limit: int) -> list:
         prefs = prefs_raw
 
     is_vip = profile.get("is_vip", False)
-    # Si el VIP tiene preferencias configuradas (al menos 1 categoría activa),
-    # mostrar SOLO lo que tiene en True. Si nunca abrió el panel (prefs vacío),
-    # mostrar todo (comportamiento por defecto para nuevos usuarios).
-    vip_has_prefs = is_vip and any(v is True for v in prefs.values())
     out = []
     for it in items:
         if it.get("is_global_alert"):
             out.append(it)
             continue
         cat = it.get("category", "General")
-        if is_vip and vip_has_prefs:
-            # Whitelist: solo mostrar categorías explícitamente activadas
-            if not prefs.get(cat, False):
-                continue
-        elif is_vip:
-            # Panel nunca abierto: respetar al menos los False explícitos
-            if prefs.get(cat, True) is False:
-                continue
+        # Blacklist: mostrar todo EXCEPTO lo que el usuario explícitamente apagó (False).
+        # Así el panel funciona como interruptor: apagar lo que NO quieres, no elegir lo que sí.
+        if is_vip and prefs.get(cat, True) is False:
+            continue
         out.append(it)
     return out[:limit]
