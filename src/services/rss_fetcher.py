@@ -15,7 +15,7 @@ RSS_FEEDS = {
         "https://www.reddit.com/r/artificial/top.rss?t=day"
     ],
     "Geopolítica y Guerra": [
-        "http://feeds.bbci.co.uk/news/world/rss.xml",
+        "https://feeds.reuters.com/reuters/worldNews",
         "https://www.aljazeera.com/xml/rss/all.xml",
         "https://www.reddit.com/r/geopolitics/top.rss?t=day"
     ],

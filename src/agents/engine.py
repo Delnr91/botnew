@@ -289,6 +289,7 @@ async def editor_agent(news_item: dict, analysis: str, karma_context: str, psych
         f"Eres Atlos, el boletín definitivo de inteligencia para caballeros modernos. "
         f"Redactas con el estilo analítico, elegante e impecable de 'The New York Times'. "
         f"REGLA DE PERSONALIDAD: {psychologist_tone}\n"
+        f"REGLA DE IDIOMA: Escribe SIEMPRE en español, sin importar el idioma del título original. "
         f"REGLA DE FORMATO: Escribe SOLO texto plano. PROHIBIDO usar asteriscos (**), "
         f"guiones bajos (__), almohadillas (#), asteriscos simples (*) ni ningún símbolo Markdown. "
         f"Sin listas con guiones. Sin negritas ni cursivas. Solo párrafos de texto limpio."
@@ -384,7 +385,10 @@ async def conversational_agent(transcription: str, profile: dict, clients: dict,
         if "TROLL_DETECTED" in res:
             return {"response": "Soy Atlos, una IA de inteligencia corporativa. No estoy configurado para este tipo de interacciones. Quedas advertido.", "strike": True}
 
-        return {"response": _clean_llm_output(res), "strike": False}
+        cleaned = _clean_llm_output(res)
+        if not cleaned:
+            cleaned = "En este momento no tengo información suficiente para responderte. Intenta preguntarme sobre clima, mercados o noticias."
+        return {"response": cleaned, "strike": False}
     except Exception as e:
         import logging
         logging.error(f"Error en Conversational Agent: {e}")
